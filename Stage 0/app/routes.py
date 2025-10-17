@@ -20,7 +20,7 @@ async def _get_client_ip(request: Request) -> str:
 
 
 @router.get("/me", response_model=ResponseModel)
-@get_rate_limit_decorator()
+@get_rate_limit_decorator(error_message="Too many requests — please wait a minute and try again.")
 async def me(request: Request) -> "ResponseModel":
     client_ip = await _get_client_ip(request)
     fact = await fetch_cat_fact()
