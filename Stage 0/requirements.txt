@@ -8,3 +8,6 @@ slowapi>=0.1.4
 pytest>=7.0.0
 pytest-asyncio>=0.21.0
 fakeredis>=1.7.0
+email-validator>=1.3.0
+requests>=2.30.0
+python-dotenv>=1.0.0
