@@ -1,69 +1,158 @@
-# Stage 0 — Profile endpoint (FastAPI)
+# Stage 0 — Profile Endpoint (FastAPI)
 
-This project implements a small FastAPI application exposing a GET `/me` endpoint that returns profile information and a dynamic cat fact fetched from `https://catfact.ninja/fact`.
+This is a simple FastAPI application that exposes a single endpoint:
+**GET `/me`**, which returns my profile information along with a random cat fact fetched from the public [Cat Facts API](https://catfact.ninja/fact).
 
-Key features
+---
 
-- GET `/me` returns JSON with the fields: `status`, `user` (email, name, stack), `timestamp` (UTC ISO8601), and `fact`
-- External Cat Facts API integration with timeout and graceful fallback
-- Modular code structure: `app/schemas.py`, `app/services.py`, `app/routes.py`, `app/main.py`
-- Basic logging and optional Redis-backed lifespan and rate limiting
-- Tests covering success and failure scenarios
+## Features
 
-Requirements
+* **GET `/me`** — Returns:
 
-- Python 3.11+
-- Install dependencies from `requirements.txt`
+  * `status`: always `"success"`
+  * `user`: includes `email`, `name`, and `stack`
+  * `timestamp`: current UTC time in ISO 8601 format
+  * `fact`: random cat fact from the Cat Facts API
+* Handles external API errors with a fallback fact (so the endpoint always responds)
+* Clean modular structure:
 
-Setup (PowerShell)
+  * `app/schemas.py` — Pydantic models
+  * `app/services.py` — Cat Facts and helper logic
+  * `app/routes.py` — Route definitions
+  * `app/main.py` — Application entry point
+* Basic logging
+* Optional Redis integration for rate limiting (non-blocking if Redis is absent)
+* Unit tests for success and fallback cases
 
-1. Create a virtual environment and activate it:
+---
+
+## Requirements
+
+* Python **3.11+**
+* Dependencies listed in `requirements.txt`
+
+---
+
+## Setup
+
+### 1. Create and activate a virtual environment
 
 ```powershell
-python -m venv .venv; .\.venv\Scripts\Activate.ps1
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
 ```
 
-2. Install dependencies:
+### 2. Install dependencies
 
 ```powershell
 pip install -r requirements.txt
 ```
 
-Environment variables
+---
 
-- `CAT_FACTS_URL` — override the cat-fact service URL (default: `https://catfact.ninja/fact`)
-- `CAT_FACTS_TIMEOUT` — timeout in seconds for external calls (default: `2.0`)
-- `REDIS_URL` — Redis URL for rate limiting (default: `redis://localhost:6379/0`). Redis is optional; see note below.
+## Environment Variables
 
-Configuration using `.env`
+| Variable            | Description                        | Default                      |
+| ------------------- | ---------------------------------- | ---------------------------- |
+| `USER_EMAIL`        | Your email address                 | —                            |
+| `USER_NAME`         | Your full name                     | —                            |
+| `USER_STACK`        | Your backend stack                 | —                            |
+| `CAT_FACTS_URL`     | Cat Facts API endpoint             | `https://catfact.ninja/fact` |
+| `CAT_FACTS_TIMEOUT` | Timeout for API call (seconds)     | `2.0`                        |
+| `REDIS_URL`         | Redis connection string (optional) | `redis://localhost:6379/0`   |
 
-- A sample `.env` file is included as `.env.example`. Copy it to `.env` and fill in your personal values for local development.
-- This project uses `pydantic-settings`'s `BaseSettings` (via `app.config.Settings`) to load environment variables and support an `.env` file.
-
-Example (PowerShell):
+> Copy `.env.example` to `.env` and fill in your values for local development.
 
 ```powershell
 Copy-Item .env.example .env
 ```
 
-Run locally
+---
 
-Start the server with uvicorn (module path points to the FastAPI `app` object in `app/main.py`):
+## Run Locally
+
+Start the development server:
 
 ```powershell
-uvicorn app.main:app --reload
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-The app will be available at: `http://127.0.0.1:8000/me`
+Then open [http://127.0.0.1:8000/me](http://127.0.0.1:8000/me)
 
-Run tests
+---
+
+## Example Response
+
+```json
+{
+  "status": "success",
+  "user": {
+    "email": "hamedayokunle58@gmail.com",
+    "name": "Hamed Ayokunle",
+    "stack": "Python/FastAPI"
+  },
+  "timestamp": "2025-10-17T12:34:56.789Z",
+  "fact": "Cats have five toes on their front paws, but only four on their back paws."
+}
+```
+
+---
+
+## Handling Failures
+
+* If the Cat Facts API is slow or unavailable, a short fallback fact is returned.
+* The `status` remains `"success"` to keep responses predictable.
+* Optionally, this behavior can be changed to return `502 Bad Gateway`.
+
+---
+
+## Deployment Notes (Railway Example)
+
+When deploying, ensure the app binds to `0.0.0.0` and uses the provided `$PORT`.
+
+**Build command:**
+
+```bash
+pip install -r requirements.txt
+```
+
+**Start command:**
+
+```bash
+uvicorn app.main:app --host 0.0.0.0 --port $PORT
+```
+
+> Confirm your Railway service type is **Web** and not **Unexposed**.
+> After deployment, open your public URL and test `/me`.
+
+**Live URL:**
+[https://hng-production-345d.up.railway.app/me](https://hng-production-345d.up.railway.app/me)
+
+---
+
+## Run Tests
 
 ```powershell
 pytest -q
 ```
 
-Notes and design choices
+Tests cover:
 
-- The timestamp in responses is generated by the Pydantic model default factory using UTC ISO8601.
-- Redis (optional): If a running Redis instance is available and the `redis` package is installed, the app will attempt to connect and use Redis for rate-limiting and lifespan features. If Redis is unavailable or the `redis` package is missing, the application logs a warning and continues to run without Redis-backed features.
-- `status` behavior: The `status` field in responses is always set to `"success"`. If the Cat Facts API fails, the endpoint returns a short fallback fact and `status: "success"`. This is an intentional design decision to keep the endpoint predictable for clients while providing dynamic content when available.
+* Successful `/me` call with mocked external fact
+* Fallback behavior on timeout or API failure
+
+---
+
+## Notes
+
+* The `timestamp` updates dynamically with each request.
+* Redis (if available) is used for rate-limiting; if not, the app logs a warning and runs normally.
+* The response `Content-Type` is always `application/json`.
+
+---
+
+## Repository
+
+GitHub Repository: [https://github.com/K-P1/HNG.git](https://github.com/K-P1/HNG.git)
+
+---
