@@ -102,7 +102,6 @@ Then open [http://127.0.0.1:8000/me](http://127.0.0.1:8000/me)
 
 * If the Cat Facts API is slow or unavailable, a short fallback fact is returned.
 * The `status` remains `"success"` to keep responses predictable.
-* Optionally, this behavior can be changed to return `502 Bad Gateway`.
 
 ---
 
@@ -156,3 +155,4 @@ Tests cover:
 GitHub Repository: [https://github.com/K-P1/HNG.git](https://github.com/K-P1/HNG.git)
 
 ---
+
