@@ -1,16 +1,27 @@
-Got it — your README is clear but way too wordy. Here’s a tightened, professional rewrite that keeps all key info but cuts the fluff and repetition:
+# String Analyzer API
+
+A RESTful API built with **FastAPI** that analyzes strings, computes their properties, and supports both structured and natural language filtering.
+
+**Live URL:** [https://hng-production-2739.up.railway.app](https://hng-production-2739.up.railway.app)
+**GitHub Repository:** [https://github.com/K-P1/HNG](https://github.com/K-P1/HNG.git)
 
 ---
 
-# String Analyzer Service
-
-A FastAPI-based REST API that analyzes strings, computes their properties, and supports both direct and natural language filtering.
-
 ## Features
 
-* **String Analysis:** Computes length, palindrome status, unique characters, word count, SHA-256 hash, and character frequency.
-* **Filtering:** Query by parameters or natural language (e.g., “palindromic strings longer than 10 characters”).
-* **Storage:** In-memory (fast and simple for development/testing).
+* Analyze any string and retrieve detailed properties
+* Filter results using query parameters or natural language
+* Fast, lightweight in-memory storage
+* Automatically computes:
+
+  * Length
+  * Palindrome status
+  * Unique characters
+  * Word count
+  * SHA-256 hash
+  * Character frequency map
+
+---
 
 ## Tech Stack
 
@@ -18,106 +29,68 @@ A FastAPI-based REST API that analyzes strings, computes their properties, and s
 * **Server:** Uvicorn
 * **Language:** Python 3.9+
 * **Validation:** Pydantic
+* **Testing:** Pytest, HTTPX
 
-## Setup
+---
+
+## Setup and Run
 
 ```bash
-# 1. Navigate to project
+# Clone the repository
+git clone https://github.com/K-P1/HNG.git
 cd "Stage 1"
 
-# 2. Create and activate virtual environment
+# Create and activate virtual environment
 python -m venv venv
 .\venv\Scripts\activate  # Windows
-source venv/bin/activate # Linux/macOS
+source venv/bin/activate # macOS/Linux
 
-# 3. Install dependencies
+# Install dependencies
 pip install -r requirements.txt
-```
 
-## Run
-
-```bash
+# Start the server
 uvicorn app.main:app --reload
 ```
 
-API Docs → [http://localhost:8000/docs](http://localhost:8000/docs)
+**Local URL:** [http://localhost:8000](http://localhost:8000)
+**Docs:** [http://localhost:8000/docs](http://localhost:8000/docs)
 
 ---
 
-## API Endpoints
+## Endpoints Overview
 
-### Health Check
-
-**GET** `/health` → `{ "status": "ok" }`
-
----
-
-### Create / Analyze String
-
-**POST** `/strings`
-
-```json
-{ "value": "racecar" }
-```
-
-→ **201 Created**
-
-```json
-{
-  "id": "sha256_hash",
-  "value": "racecar",
-  "properties": {
-    "length": 7,
-    "is_palindrome": true,
-    "unique_characters": 5,
-    "word_count": 1,
-    "sha256_hash": "...",
-    "character_frequency_map": { "r": 2, "a": 2, "c": 2, "e": 1 }
-  },
-  "created_at": "2025-10-20T12:00:00Z"
-}
-```
+| Method | Endpoint                              | Description                             |
+| ------ | ------------------------------------- | --------------------------------------- |
+| GET    | `/health`                             | Health check                            |
+| POST   | `/strings`                            | Analyze and store a string              |
+| GET    | `/strings`                            | Get all strings (with optional filters) |
+| GET    | `/strings/{string_value}`             | Get one by value                        |
+| DELETE | `/strings/{string_value}`             | Delete a string                         |
+| GET    | `/strings/filter-by-natural-language` | Query via natural language              |
 
 ---
 
-### Get All Strings
+### Natural Language Examples
 
-**GET** `/strings?is_palindrome=true&min_length=5&contains_character=a`
-
-Optional filters:
-`min_length`, `max_length`, `word_count`, `is_palindrome`, `contains_character`
-
----
-
-### Natural Language Filter
-
-**GET** `/strings/filter-by-natural-language?query=palindromic%20strings%20longer%20than%205`
-
-Interprets queries like:
-
-* “palindromic strings” → `is_palindrome=true`
-* “longer than 10 characters” → `min_length=11`
-* “single word strings” → `word_count=1`
-
----
-
-### Get / Delete Specific String
-
-**GET** `/strings/{string_value}`
-**DELETE** `/strings/{string_value}`
+| Example Query                       | Parsed Filters                     |
+| ----------------------------------- | ---------------------------------- |
+| `palindromic strings`               | `is_palindrome=true`               |
+| `strings longer than 10 characters` | `min_length=11`                    |
+| `single word palindromes`           | `word_count=1, is_palindrome=true` |
+| `strings containing z`              | `contains_character=z`             |
 
 ---
 
 ## Computed Properties
 
-| Property                  | Type | Description                 |
-| ------------------------- | ---- | --------------------------- |
-| `length`                  | int  | Number of characters        |
-| `is_palindrome`           | bool | True if reads same backward |
-| `unique_characters`       | int  | Distinct characters         |
-| `word_count`              | int  | Words separated by spaces   |
-| `sha256_hash`             | str  | Unique identifier           |
-| `character_frequency_map` | dict | Character counts            |
+| Property                  | Description                     |
+| ------------------------- | ------------------------------- |
+| `length`                  | Number of characters            |
+| `is_palindrome`           | True if reads the same backward |
+| `unique_characters`       | Number of distinct characters   |
+| `word_count`              | Number of space-separated words |
+| `sha256_hash`             | Unique hash identifier          |
+| `character_frequency_map` | Frequency of each character     |
 
 ---
 
@@ -126,7 +99,7 @@ Interprets queries like:
 ```
 app/
 ├── main.py          # FastAPI app
-├── routes.py        # Endpoints
+├── routes.py        # API endpoints
 ├── services.py      # Core logic
 ├── schemas.py       # Pydantic models
 ├── db.py            # In-memory storage
@@ -142,60 +115,33 @@ tests/
 ## Testing
 
 ```bash
-pytest -q            # run tests
-pytest --cov=app     # with coverage
+pytest -q
+pytest --cov=app
 ```
 
 ---
 
 ## Deployment
 
+Hosted on **Railway**
+**Base URL:** [https://hng-production-2739.up.railway.app](https://hng-production-2739.up.railway.app)
+
 Supported: **Railway**, **Heroku**, **AWS**, **PXXL App**
-Not Supported: **Vercel**, **Render**
-
-Steps:
-
-1. Push to GitHub
-2. Connect Railway → auto-deploys
-3. Base URL → `https://yourapp.up.railway.app`
-
----
-
-## Environment Variables
-
-None required (defaults: `HOST=0.0.0.0`, `PORT=8000`).
-
----
-
-## Example Usage
-
-**Create a string**
-
-```bash
-curl -X POST http://localhost:8000/strings \
--H "Content-Type: application/json" \
--d '{"value": "hello world"}'
-```
-
-**Filter by natural language**
-
-```bash
-curl "http://localhost:8000/strings/filter-by-natural-language?query=single%20word%20palindromes"
-```
+Not supported: **Vercel**, **Render**
 
 ---
 
 ## Notes
 
-* Palindrome check is case-insensitive
+* Palindrome checks are case-insensitive
 * Data resets on restart (in-memory)
-* Natural language parsing uses regex heuristics
-* Single-threaded; ideal for demo/testing
+* Natural language queries use regex-based parsing
+* Best suited for testing, learning, and demos
 
 ---
 
-**License:** Built for HNG Backend Wizards — Stage 1
+### Author
 
----
-
-Would you like me to rewrite it *even shorter* (like a minimal portfolio-style README), or keep this balanced “developer doc” style?
+**Hamed Ayokunle Suleiman (Kunle)**
+Python Backend Engineer | FastAPI Developer
+Built for **HNG Backend Wizards — Stage 1**
