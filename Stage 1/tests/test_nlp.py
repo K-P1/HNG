@@ -23,3 +23,32 @@ def test_contains_letter_z():
     res = interpret_nl_query(q)
     parsed = res['parsed_filters']
     assert parsed.get('contains_character') == 'z'
+
+
+def test_non_palindromic_strings():
+    q = "non palindromic strings"
+    res = interpret_nl_query(q)
+    parsed = res['parsed_filters']
+    assert parsed.get('is_palindrome') is False
+
+
+def test_not_palindromic_strings():
+    q = "not palindromic strings"
+    res = interpret_nl_query(q)
+    parsed = res['parsed_filters']
+    assert parsed.get('is_palindrome') is False
+
+
+def test_at_least_three_words():
+    q = "strings with at least three words"
+    res = interpret_nl_query(q)
+    parsed = res['parsed_filters']
+    assert parsed.get('min_word_count') == 3
+
+
+def test_contain_the_first_vowel():
+    q = "strings that contain the first vowel"
+    res = interpret_nl_query(q)
+    parsed = res['parsed_filters']
+    # first vowel heuristic maps to 'a'
+    assert parsed.get('contains_character') == 'a'

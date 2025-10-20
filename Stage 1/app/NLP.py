@@ -53,17 +53,61 @@ def interpret_nl_query(query: str) -> Dict[str, Any]:
     q = query.lower()
     filters: Dict[str, Any] = {}
 
-    if re.search(r'\bpalindr?om(e|ic)?s?\b', q):
+    # Negation: handle "non/not palindromic" before positive match
+    if re.search(r'\b(?:non[-\s]*|not\s+)(?:palindr?om(?:e|ic)?s?)\b', q):
+        filters['is_palindrome'] = False
+    elif re.search(r'\bpalindr?om(e|ic)?s?\b', q):
         filters['is_palindrome'] = True
 
     if re.search(r'\b(single|one)\s+word\b', q):
         filters['word_count'] = 1
     else:
-        m = re.search(r'\bword(?:\s+count)?\s*(?:is|=|:)?\s*(\d+|[a-z]+)\b', q)
+        # exactly N words
+        m = re.search(r'\b(?:exactly\s+)?(\d+|[a-z]+)\s+words?\b', q)
         if m:
             n = _safe_int(m.group(1))
             if n is not None:
                 filters['word_count'] = n
+
+        # at least/min/minimum N words
+        m = re.search(r'\b(?:at least|min(?:imum)?)\s+(\d+|[a-z]+)\s+words?\b', q)
+        if m:
+            n = _safe_int(m.group(1))
+            if n is not None:
+                filters['min_word_count'] = max(filters.get('min_word_count', 0), n)
+
+        # at most/max/maximum N words
+        m = re.search(r'\b(?:at most|max(?:imum)?)\s+(\d+|[a-z]+)\s+words?\b', q)
+        if m:
+            n = _safe_int(m.group(1))
+            if n is not None:
+                current = filters.get('max_word_count', float('inf'))
+                filters['max_word_count'] = min(current, n)
+
+        # N or more / N or fewer words
+        m = re.search(r'\b(\d+|[a-z]+)\s+or\s+more\s+words?\b', q)
+        if m:
+            n = _safe_int(m.group(1))
+            if n is not None:
+                filters['min_word_count'] = max(filters.get('min_word_count', 0), n)
+
+        m = re.search(r'\b(\d+|[a-z]+)\s+or\s+fewer\s+words?\b', q)
+        if m:
+            n = _safe_int(m.group(1))
+            if n is not None:
+                current = filters.get('max_word_count', float('inf'))
+                filters['max_word_count'] = min(current, n)
+
+        # between A and B words
+        m = re.search(r'\bbetween\s+(\d+|[a-z]+)\s+and\s+(\d+|[a-z]+)\s+words?\b', q)
+        if m:
+            a = _safe_int(m.group(1))
+            b = _safe_int(m.group(2))
+            if a is not None and b is not None:
+                lo, hi = sorted([a, b])
+                filters['min_word_count'] = max(filters.get('min_word_count', 0), lo)
+                current = filters.get('max_word_count', float('inf'))
+                filters['max_word_count'] = min(current, hi)
 
     m = re.search(r'length\s*(?:between|from)\s*(\d+|[a-z]+)\s*(?:and|to|-)\s*(\d+|[a-z]+)', q)
     if m:
@@ -106,15 +150,21 @@ def interpret_nl_query(query: str) -> Dict[str, Any]:
             filters['min_length'] = n
             filters['max_length'] = n
 
-    m = re.search(r"(?:contains|containing)(?: the)? (?:letter |character )?['\"]?([a-z])['\"]?", q)
+    # Explicit character capture only when 'letter' or 'character' is specified
+    m = re.search(r"(?:contain|contains|containing)(?: the)? (?:letter|character) ['\"]?([a-z])['\"]?", q)
     if m:
         filters['contains_character'] = m.group(1)
 
     if 'first vowel' in q:
+        # Heuristic: map to 'a' unless an explicit letter was already captured
         filters['contains_character'] = filters.get('contains_character', 'a')
 
     if 'min_length' in filters and 'max_length' in filters:
         if filters['min_length'] > filters['max_length']:
             raise ValueError("parsed filters conflict: min_length > max_length")
+
+    if 'min_word_count' in filters and 'max_word_count' in filters:
+        if filters['min_word_count'] > filters['max_word_count']:
+            raise ValueError("parsed filters conflict: min_word_count > max_word_count")
 
     return {'original': query, 'parsed_filters': filters}

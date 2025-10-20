@@ -226,6 +226,35 @@ class TestFilterByNaturalLanguageEndpoint:
         response = client.get("/strings/filter-by-natural-language")
         assert response.status_code == 400
 
+    def test_non_palindromic_strings(self):
+        """Test NL query for non/not palindromic strings."""
+        response = client.get(
+            "/strings/filter-by-natural-language?query=non%20palindromic%20strings"
+        )
+        assert response.status_code == 200
+        data = response.json()
+        # From setup: a, racecar, hello world, level -> non-palindromic: 'hello world' only
+        assert data["count"] == 1
+
+    def test_at_least_three_words(self):
+        """Test NL query for 'at least 3 words' returns none with current fixtures."""
+        response = client.get(
+            "/strings/filter-by-natural-language?query=strings%20with%20at%20least%203%20words"
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["count"] == 0
+
+    def test_contain_the_first_vowel(self):
+        """Test NL query for 'contain the first vowel' (heuristic maps to 'a')."""
+        response = client.get(
+            "/strings/filter-by-natural-language?query=strings%20that%20contain%20the%20first%20vowel"
+        )
+        assert response.status_code == 200
+        data = response.json()
+        # From fixtures: 'a', 'racecar', 'hello world', 'level' -> those containing 'a': 'a', 'racecar' => 2
+        assert data["count"] == 2
+
 
 class TestDeleteStringEndpoint:
     """Tests for DELETE /strings/{string_id} endpoint."""

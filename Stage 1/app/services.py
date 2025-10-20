@@ -49,6 +49,14 @@ def _matches_filters(record: dict, filters: Dict[str, Any]) -> bool:
         if props.get('word_count') != int(filters['word_count']):
             return False
 
+    if 'min_word_count' in filters:
+        if props.get('word_count', 0) < int(filters['min_word_count']):
+            return False
+
+    if 'max_word_count' in filters:
+        if props.get('word_count', 0) > int(filters['max_word_count']):
+            return False
+
     if 'contains_character' in filters:
         ch = str(filters['contains_character']).lower()
         freq_map = props.get('character_frequency_map', {})
