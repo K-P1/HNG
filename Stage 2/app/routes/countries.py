@@ -51,7 +51,6 @@ def refresh_countries(
             },
         )
 
-    # Update global last_refreshed_at meta timestamp on successful refresh
     now_iso = None
     last_dt: Optional[datetime] = None
     try:
@@ -60,13 +59,11 @@ def refresh_countries(
         now_iso = now.isoformat()
         last_dt = now
     except Exception:
-        # Non-fatal: if setting meta fails, proceed
         now_iso = None
 
     countries = crud.get_countries(db)
     top5 = sorted(countries, key=lambda c: c.estimated_gdp or 0, reverse=True)[:5]
     last_ts: Optional[str] = None
-    # Prefer global last refresh timestamp; fall back to per-country max if not available
     if now_iso:
         last_ts = now_iso
     else:
@@ -85,7 +82,6 @@ def refresh_countries(
         if dt is not None:
             ts_for_image = dt.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     except Exception:
-        # If parsing fails, fall back to the raw string with UTC label if it clearly indicates UTC
         ts_for_image = (last_ts + " UTC") if last_ts else "(unknown)"
 
     generate_summary_image(top5, len(countries), ts_for_image)
@@ -99,7 +95,7 @@ def refresh_countries(
     description=(
         "Returns countries with optional filtering, sorting, and pagination.\n\n"
         "Filters:\n"
-        "- region: case-insensitive exact region match (e.g., 'Europe')\n"
+        "- region: case-insensitive partial match; wildcards (%) and (_) supported (e.g., 'eu' → 'Europe')\n"
         "- currency: 3-letter currency code (e.g., 'USD', 'NGN')\n\n"
         "Sorting options (sort): name_asc|name_desc|population_asc|population_desc|gdp_asc|gdp_desc\n\n"
         "Pagination: use limit and offset."
@@ -109,13 +105,11 @@ def refresh_countries(
 def get_all(
     region: Optional[str] = Query(
         default=None,
-        description="Filter by region (case-insensitive exact match)",
-        example="Europe",
+        description="Filter by region (case-insensitive partial match; wildcards % and _ supported)",
     ),
     currency: Optional[str] = Query(
         default=None,
         description="Filter by currency code (ISO 4217, case-insensitive)",
-        example="USD",
         min_length=3,
         max_length=10,
     ),
@@ -124,25 +118,21 @@ def get_all(
         description=(
             "Sort order: one of name_asc, name_desc, population_asc, population_desc, gdp_asc, gdp_desc"
         ),
-        example="population_desc",
     ),
     limit: Optional[int] = Query(
         default=None,
         ge=1,
         le=500,
         description="Maximum number of records to return (1-500)",
-        example=50,
     ),
     offset: Optional[int] = Query(
         default=None,
         ge=0,
         description="Number of records to skip before starting to collect the result set",
-        example=0,
     ),
     db: Session = Depends(get_db),
     _: None = _rate_limit(settings.RATE_LIMIT_DEFAULT_TIMES, settings.RATE_LIMIT_DEFAULT_SECONDS),
 ):
-    # Validate sort parameter strictly per spec
     if sort is not None and sort not in VALID_SORTS:
         raise HTTPException(
             status_code=400,

@@ -2,6 +2,11 @@
 
 A FastAPI service that fetches and caches country data along with computed GDP estimates. Includes endpoints for refresh, querying, deletion, status reporting, and generating a summary image.
 
+**Live API:** [https://hng-production-8c0c.up.railway.app](https://hng-production-8c0c.up.railway.app)
+**Swagger Docs:** [https://hng-production-8c0c.up.railway.app/docs](https://hng-production-8c0c.up.railway.app/docs)
+
+---
+
 ## Tech Stack
 
 * FastAPI, SQLAlchemy, Pydantic v2
@@ -9,6 +14,8 @@ A FastAPI service that fetches and caches country data along with computed GDP e
 * Requests (for HTTP calls)
 * MySQL (primary database)
 * SQLite (used automatically for local development if MySQL isn’t available)
+
+---
 
 ## Features
 
@@ -31,6 +38,8 @@ A FastAPI service that fetches and caches country data along with computed GDP e
 
 * **GET /countries/image** – Serves the generated summary image
 
+---
+
 ## Setup
 
 1. **Install Python 3.11+**
@@ -52,28 +61,33 @@ A FastAPI service that fetches and caches country data along with computed GDP e
    Copy-Item .env.example .env
    ```
 
-   **Key variables:**
+**Key variables:**
 
-   * `DATABASE_URL`: Database connection string
+* `DATABASE_URL`: Database connection string
 
-     * Default (SQLite): `sqlite:///./dev.db`
-     * MySQL: `mysql+mysqlconnector://user:pass@host:3306/dbname`
-   * `PORT`, `LOG_LEVEL`, `CONSOLE_LOG_LEVEL`
-   * `COUNTRY_API`, `EXCHANGE_API`
-   * Optional: `REDIS_URL` for rate limiting
+  * Default (SQLite): `sqlite:///./dev.db`
+  * MySQL: `mysql+mysqlconnector://user:pass@host:3306/dbname`
+* `PORT`, `LOG_LEVEL`, `CONSOLE_LOG_LEVEL`
+* `COUNTRY_API`, `EXCHANGE_API`
+* Optional: `REDIS_URL` for rate limiting
 
-   **Notes:**
+**Notes:**
 
-   * In local development, the app falls back to SQLite if MySQL is unavailable.
-   * In production, set `DATABASE_URL` to a valid MySQL URL and ensure proper permissions.
+* In local development, the app falls back to SQLite if MySQL is unavailable.
+* In production, set `DATABASE_URL` to a valid MySQL URL and ensure proper permissions.
 
-## Run
+---
+
+## Run Locally
 
 ```powershell
 uvicorn app.main:app --reload --port 8000
 ```
 
-Access Swagger UI at: [http://localhost:8000/docs](http://localhost:8000/docs)
+Local Swagger UI: [http://localhost:8000/docs](http://localhost:8000/docs)
+Production Swagger UI: [https://hng-production-8c0c.up.railway.app/docs](https://hng-production-8c0c.up.railway.app/docs)
+
+---
 
 ## Optional: Rate Limiting (Redis)
 
@@ -97,11 +111,15 @@ Access Swagger UI at: [http://localhost:8000/docs](http://localhost:8000/docs)
 
 If Redis isn’t available, rate limiting is disabled automatically.
 
+---
+
 ## Tests
 
 ```powershell
 pytest -q
 ```
+
+---
 
 ## Error Responses
 
@@ -111,6 +129,8 @@ All errors return JSON:
 * `400`: `{ "error": "Validation failed", "details": [...] }`
 * `503`: `{ "error": "External data source unavailable" }`
 * `500`: `{ "error": "Internal server error" }`
+
+---
 
 ## Implementation Notes
 

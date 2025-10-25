@@ -6,9 +6,12 @@ def get_country(db: Session, name: str):
 
 def get_countries(db: Session, region=None, currency=None, sort=None, limit=None, offset=None):
     query = db.query(models.Country)
-    if region:
-        # Case-insensitive exact match
-        query = query.filter(models.Country.region.ilike(region))
+    if region is not None:
+        trimmed = region.strip()
+        if not trimmed:
+            return []
+        pattern = trimmed if ("%" in trimmed or "_" in trimmed) else f"%{trimmed}%"
+        query = query.filter(models.Country.region.ilike(pattern))
     if currency:
         query = query.filter(models.Country.currency_code.ilike(currency))
 
