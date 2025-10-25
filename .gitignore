@@ -1,33 +1,33 @@
 # Byte-compiled / optimized / DLL files
-__pycache__/
+*/__pycache__/
 
 # Unit test / coverage reports
-htmlcov/
-.coverage
-.coverage.*
-.cache
-.pytest_cache/
+*/htmlcov/
+*/.coverage
+*/.coverage.*
+*/.cache
+*/.pytest_cache/
 
 # pyenv
-.python-version
+*/.python-version
 
 # pipenv
-Pipfile.lock
+*/Pipfile.lock
 
 # venv
-venv/
-ENV/
-env/
-env.bak/
-venv.bak/
+*/venv/
+*/ENV/
+*/env/
+*/env.bak/
+*/venv.bak/
 
 # mypy
-.mypy_cache/
-.dmypy.json
+*/.mypy_cache/
+*/.dmypy.json
 
 # IDEs and editors
-.vscode/
-.idea/
+*/.vscode/
+*/.idea/
 
 # Stage-specific
 */__pycache__/
@@ -36,4 +36,4 @@ venv.bak/
 # Tests cache
 */__pycache__/
 */tests/*.pyc
-.env
+*/.env
