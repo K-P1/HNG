@@ -20,3 +20,11 @@ class Country(Base):
     last_refreshed_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), default=func.now(), onupdate=func.now()
     )
+
+
+class RefreshMeta(Base):
+    """Singleton-style table to store application-level metadata such as last refresh time."""
+    __tablename__ = "refresh_meta"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    last_refreshed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -4,9 +4,7 @@ from app import models
 from sqlalchemy.orm import Session
 from app.config import settings
 
-# Centralize API URLs in settings (still overridable via .env)
-COUNTRY_API: str = str(settings.COUNTRY_API)
-EXCHANGE_API: str = str(settings.EXCHANGE_API)
+LAST_ERROR_SOURCE = None
 
 
 def refresh_data(db: Session):
@@ -15,20 +13,29 @@ def refresh_data(db: Session):
     Returns False if external data sources are unavailable; DB remains unchanged.
     """
     # 1) Fetch external data first; abort on failure
+    global LAST_ERROR_SOURCE
+    LAST_ERROR_SOURCE = None
     try:
-        countries_resp = requests.get(COUNTRY_API, timeout=15)
+        country_api = str(settings.COUNTRY_API)
+        exchange_api = str(settings.EXCHANGE_API)
+
+        countries_resp = requests.get(country_api, timeout=15)
         status = getattr(countries_resp, "status_code", 200)
         if status != 200:
+            LAST_ERROR_SOURCE = "Countries API"
             raise RuntimeError(f"Countries API returned {status}")
         countries_data = countries_resp.json()
 
-        rates_resp = requests.get(EXCHANGE_API, timeout=15)
+        rates_resp = requests.get(exchange_api, timeout=15)
         status = getattr(rates_resp, "status_code", 200)
         if status != 200:
+            LAST_ERROR_SOURCE = "Exchange Rates API"
             raise RuntimeError(f"Exchange API returned {status}")
         rates_json = rates_resp.json()
         rates = rates_json.get("rates") or {}
     except Exception as e:
+        if LAST_ERROR_SOURCE is None:
+            LAST_ERROR_SOURCE = "External API"
         print("Error fetching external data:", e)
         return False
 

@@ -1,6 +1,13 @@
 from logging.config import fileConfig
+import sys
+from pathlib import Path
 
 from alembic import context  # type: ignore[attr-defined]
+
+# Ensure project root is on sys.path so `app` can be imported when Alembic runs
+BASE_DIR = Path(__file__).resolve().parents[1]
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
 
 from app.config import settings
 from app.database import engine, Base

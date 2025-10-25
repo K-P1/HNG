@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import Country
+from app import crud
 from sqlalchemy import func
 from app.config import settings
 
@@ -32,7 +33,7 @@ def get_status(
     _: None = _rate_limit(settings.RATE_LIMIT_DEFAULT_TIMES, settings.RATE_LIMIT_DEFAULT_SECONDS),
 ):
     total = db.query(func.count(Country.id)).scalar()
-    last = db.query(func.max(Country.last_refreshed_at)).scalar()
+    last = crud.get_last_refresh(db) or db.query(func.max(Country.last_refreshed_at)).scalar()
     return {
         "total_countries": total or 0,
         "last_refreshed_at": last

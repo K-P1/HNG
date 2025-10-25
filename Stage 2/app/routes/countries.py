@@ -6,7 +6,7 @@ import app.services.fetch_data as fetch_data
 from app.services.image_generator import generate_summary_image
 from fastapi.responses import FileResponse
 from typing import Optional, List, cast
-from datetime import datetime
+from datetime import datetime, timezone
 from app.config import settings
 
 try:
@@ -42,18 +42,53 @@ def refresh_countries(
 ):
     success = fetch_data.refresh_data(db)
     if not success:
-        raise HTTPException(status_code=503, detail="External data source unavailable")
+        source = getattr(fetch_data, "LAST_ERROR_SOURCE", None) or "External API"
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "External data source unavailable",
+                "details": f"Could not fetch data from {source}",
+            },
+        )
+
+    # Update global last_refreshed_at meta timestamp on successful refresh
+    now_iso = None
+    last_dt: Optional[datetime] = None
+    try:
+        now = datetime.now(timezone.utc)
+        crud.set_last_refresh(db, now)
+        now_iso = now.isoformat()
+        last_dt = now
+    except Exception:
+        # Non-fatal: if setting meta fails, proceed
+        now_iso = None
 
     countries = crud.get_countries(db)
     top5 = sorted(countries, key=lambda c: c.estimated_gdp or 0, reverse=True)[:5]
     last_ts: Optional[str] = None
-    if countries:
-        with_ts_any = [c.last_refreshed_at for c in countries if c.last_refreshed_at is not None]
-        if with_ts_any:
-            with_ts = cast(list[datetime], with_ts_any)
-            latest = max(with_ts)
-            last_ts = latest.isoformat()
-    generate_summary_image(top5, len(countries), last_ts or "(unknown)")
+    # Prefer global last refresh timestamp; fall back to per-country max if not available
+    if now_iso:
+        last_ts = now_iso
+    else:
+        if countries:
+            with_ts_any = [c.last_refreshed_at for c in countries if c.last_refreshed_at is not None]
+            if with_ts_any:
+                with_ts = cast(list[datetime], with_ts_any)
+                latest = max(with_ts)
+                last_dt = latest
+                last_ts = latest.isoformat()
+
+    # Format timestamp for image: "YYYY-MM-DD HH:MM UTC"
+    ts_for_image = "(unknown)"
+    try:
+        dt = last_dt if last_dt else (datetime.fromisoformat(last_ts) if last_ts else None)
+        if dt is not None:
+            ts_for_image = dt.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    except Exception:
+        # If parsing fails, fall back to the raw string with UTC label if it clearly indicates UTC
+        ts_for_image = (last_ts + " UTC") if last_ts else "(unknown)"
+
+    generate_summary_image(top5, len(countries), ts_for_image)
 
     return {"message": "Data refreshed successfully"}
 

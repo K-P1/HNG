@@ -38,3 +38,22 @@ def delete_country(db: Session, name: str):
         db.commit()
         return True
     return False
+
+
+# -----------------------------
+# App-level metadata operations
+# -----------------------------
+def get_last_refresh(db: Session):
+    meta = db.query(models.RefreshMeta).filter(models.RefreshMeta.id == 1).first()
+    return meta.last_refreshed_at if meta else None
+
+
+def set_last_refresh(db: Session, dt):
+    meta = db.query(models.RefreshMeta).filter(models.RefreshMeta.id == 1).first()
+    if meta is None:
+        meta = models.RefreshMeta(id=1, last_refreshed_at=dt)
+        db.add(meta)
+    else:
+        meta.last_refreshed_at = dt
+    db.commit()
+    return meta.last_refreshed_at
