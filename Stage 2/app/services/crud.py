@@ -1,8 +1,10 @@
 from sqlalchemy.orm import Session
 from app import models
 
+
 def get_country(db: Session, name: str):
     return db.query(models.Country).filter(models.Country.name.ilike(name)).first()
+
 
 def get_countries(db: Session, region=None, currency=None, sort=None, limit=None, offset=None):
     query = db.query(models.Country)
@@ -33,6 +35,7 @@ def get_countries(db: Session, region=None, currency=None, sort=None, limit=None
     if limit is not None:
         query = query.limit(limit)
     return query.all()
+
 
 def delete_country(db: Session, name: str):
     country = get_country(db, name)

@@ -1,12 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Path
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app import crud, schemas
-import app.services.fetch_data as fetch_data
-from app.services.image_generator import generate_summary_image
+from app import schemas
+from app.services import country_service
 from fastapi.responses import FileResponse
-from typing import Optional, List, cast
-from datetime import datetime, timezone
+from typing import Optional, List
 from app.config import settings
 
 try:
@@ -26,7 +24,6 @@ def _rate_limit(times: int, seconds: int):
     return Depends(_noop)
 
 router = APIRouter()
-VALID_SORTS = {"name_asc","name_desc","population_asc","population_desc","gdp_asc","gdp_desc"}
 
 @router.post(
     "/refresh",
@@ -40,53 +37,7 @@ def refresh_countries(
     db: Session = Depends(get_db),
     _: None = _rate_limit(settings.RATE_LIMIT_REFRESH_TIMES, settings.RATE_LIMIT_REFRESH_SECONDS),
 ):
-    success = fetch_data.refresh_data(db)
-    if not success:
-        source = getattr(fetch_data, "LAST_ERROR_SOURCE", None) or "External API"
-        raise HTTPException(
-            status_code=503,
-            detail={
-                "error": "External data source unavailable",
-                "details": f"Could not fetch data from {source}",
-            },
-        )
-
-    now_iso = None
-    last_dt: Optional[datetime] = None
-    try:
-        now = datetime.now(timezone.utc)
-        crud.set_last_refresh(db, now)
-        now_iso = now.isoformat()
-        last_dt = now
-    except Exception:
-        now_iso = None
-
-    countries = crud.get_countries(db)
-    top5 = sorted(countries, key=lambda c: c.estimated_gdp or 0, reverse=True)[:5]
-    last_ts: Optional[str] = None
-    if now_iso:
-        last_ts = now_iso
-    else:
-        if countries:
-            with_ts_any = [c.last_refreshed_at for c in countries if c.last_refreshed_at is not None]
-            if with_ts_any:
-                with_ts = cast(list[datetime], with_ts_any)
-                latest = max(with_ts)
-                last_dt = latest
-                last_ts = latest.isoformat()
-
-    # Format timestamp for image: "YYYY-MM-DD HH:MM UTC"
-    ts_for_image = "(unknown)"
-    try:
-        dt = last_dt if last_dt else (datetime.fromisoformat(last_ts) if last_ts else None)
-        if dt is not None:
-            ts_for_image = dt.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    except Exception:
-        ts_for_image = (last_ts + " UTC") if last_ts else "(unknown)"
-
-    generate_summary_image(top5, len(countries), ts_for_image)
-
-    return {"message": "Data refreshed successfully"}
+    return country_service.refresh_countries(db)
 
 @router.get(
     "/",
@@ -133,15 +84,7 @@ def get_all(
     db: Session = Depends(get_db),
     _: None = _rate_limit(settings.RATE_LIMIT_DEFAULT_TIMES, settings.RATE_LIMIT_DEFAULT_SECONDS),
 ):
-    if sort is not None and sort not in VALID_SORTS:
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "error": "Validation failed",
-                "details": {"sort": "invalid value; must be one of: " + ", ".join(sorted(VALID_SORTS))},
-            },
-        )
-    return crud.get_countries(db, region, currency, sort, limit, offset)
+    return country_service.list_countries(db, region, currency, sort, limit, offset)
 
 @router.get(
     "/image",
@@ -169,10 +112,7 @@ def get_one(
     db: Session = Depends(get_db),
     _: None = _rate_limit(settings.RATE_LIMIT_DEFAULT_TIMES, settings.RATE_LIMIT_DEFAULT_SECONDS),
 ):
-    country = crud.get_country(db, name)
-    if not country:
-        raise HTTPException(status_code=404, detail="Country not found")
-    return country
+    return country_service.get_country_by_name(db, name)
 
 @router.delete(
     "/{name}",
@@ -184,6 +124,4 @@ def delete_country(
     db: Session = Depends(get_db),
     _: None = _rate_limit(settings.RATE_LIMIT_DEFAULT_TIMES, settings.RATE_LIMIT_DEFAULT_SECONDS),
 ):
-    if not crud.delete_country(db, name):
-        raise HTTPException(status_code=404, detail="Country not found")
-    return {"message": "Deleted successfully"}
+    return country_service.delete_country_by_name(db, name)
