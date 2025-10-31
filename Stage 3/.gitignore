@@ -21,8 +21,8 @@ app.db
 Thumbs.db
 
 # alembic
-alembic/versions/
-alembic/versions/
+alembic/versions/*
+!alembic/versions/.gitkeep
 
 # personal files
 docs/
