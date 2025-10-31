@@ -20,9 +20,9 @@ app.db
 .DS_Store
 Thumbs.db
 
-# alembic
-alembic/versions/*
-!alembic/versions/.gitkeep
+# # alembic
+# alembic/versions/*
+# !alembic/versions/.gitkeep
 
 # personal files
 docs/
