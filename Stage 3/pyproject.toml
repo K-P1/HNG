@@ -19,6 +19,7 @@ dependencies = [
     "openai",
     "groq",
     "alembic",
+    "mysql-connector-python>=9.5.0",
 ]
 
 [tool.setuptools.packages.find]
