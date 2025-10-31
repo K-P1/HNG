@@ -8,7 +8,6 @@ from typing import List
 from app import schemas
 from app import services
 
-# Load .env so the agent name can be provided there
 load_dotenv()
 
 logger = logging.getLogger("routes")
@@ -66,39 +65,23 @@ AGENT_NAME = os.getenv("A2A_AGENT_NAME", os.getenv("AGENT_NAME", "reflectiveAssi
 
 
 @router.post(f"/a2a/agent/{AGENT_NAME}")
+
 async def reflective_assistant(request: Request):
-    # Read the raw body first so we can avoid raising JSONDecodeError when
-    # the incoming request has an empty body or non-JSON content.
-    body = await request.body()
-    # If DEBUG=true, log the raw body contents (helpful while integrating Telex).
-    # We use a tolerant decode so logging never raises.
+    """A lightweight A2A entrypoint that validates the incoming JSON-RPC
+    payload against our A2A models.
+    """
     try:
-        debug_enabled = os.getenv("DEBUG", "false").lower() in ("1", "true", "yes")
+        payload = await request.json()
     except Exception:
-        debug_enabled = False
-
-    if debug_enabled:
+        # Tolerant fallback to raw bytes -> dict
         try:
-            raw_text = body.decode("utf-8", errors="replace") if body else ""
-            logger.debug(f"A2A raw body: {raw_text}")
-        except Exception:
-            logger.debug("A2A raw body: <unprintable binary>")
-    if not body or body.strip() == b"":
-        logger.warning("Empty body received on A2A endpoint; delegating empty payload to service.")
-        payload = {}
-    else:
-        try:
-            # Preferred path: FastAPI's json() which respects request charset
-            payload = await request.json()
-        except Exception:
-            # Fallback: try a tolerant decode from raw bytes
-            try:
-                import json as _json
+            raw = await request.body()
+            import json as _json
 
-                payload = _json.loads(body.decode("utf-8", errors="ignore"))
-            except Exception:
-                logger.exception("Failed to parse request body as JSON; delegating empty payload to service.")
-                payload = {}
+            payload = _json.loads(raw.decode("utf-8", errors="ignore")) if raw else {}
+        except Exception:
+            logger.exception("Failed to parse request body as JSON; using empty payload.")
+            payload = {}
 
-    response = services.handle_a2a_jsonrpc(payload)
+    response = services.handle_jsonrpc_payload(payload)
     return JSONResponse(response)

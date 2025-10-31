@@ -5,6 +5,7 @@ from app.utils import llm
 import uuid
 from fastapi import HTTPException
 from typing import Any, Dict
+from app.models.a2a import JSONRPCRequest
 
 logger = logging.getLogger("services")
 
@@ -87,13 +88,6 @@ def list_journals(user_id: str, limit: int = 20):
 
 
 def handle_a2a_jsonrpc(payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Process a Telex A2A JSON-RPC 2.0 payload and return a JSON-RPC response.
-
-    - Ensures the response includes an "id" (echoed or generated).
-    - Extracts text from common Telex shapes (message.parts, message.text, params.text).
-    - Calls existing `process_telex_message` for domain logic and packages the
-      reply under `result.messages` with any extra fields under `result.metadata`.
-    """
     request_id = payload.get("id")
     if not request_id:
         # Generate a UUID if no id was provided to respect JSON-RPC contract
@@ -123,7 +117,6 @@ def handle_a2a_jsonrpc(payload: Dict[str, Any]) -> Dict[str, Any]:
     user_id = params.get("user_id") or (message_obj.get("user_id") if isinstance(message_obj, dict) else None) or params.get("userId") or "unknown-user"
 
     if not text:
-        # If we couldn't find a text payload, include the full params as text to the LLM
         text = str(params)
 
     try:
@@ -150,3 +143,27 @@ def handle_a2a_jsonrpc(payload: Dict[str, Any]) -> Dict[str, Any]:
         }
 
     return {"jsonrpc": "2.0", "id": request_id, "result": result}
+
+
+def handle_jsonrpc_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        JSONRPCRequest.model_validate(payload)
+    except Exception as e:
+        logger.warning("Invalid JSON-RPC payload: %s", e)
+        request_id = payload.get("id") or ""
+        return {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "error": {"code": -32600, "message": "Invalid Request", "data": str(e)},
+        }
+
+    try:
+        return handle_a2a_jsonrpc(payload)
+    except Exception as e:
+        logger.exception("Unhandled exception while handling A2A payload: %s", e)
+        request_id = payload.get("id") or ""
+        return {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "error": {"code": -32000, "message": "Server error", "data": str(e)},
+        }

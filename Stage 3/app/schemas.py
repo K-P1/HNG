@@ -2,17 +2,6 @@ from pydantic import BaseModel, Field
 from typing import Optional
 from datetime import datetime
 
-class TelexMessage(BaseModel):
-    user_id: str = Field(..., description="Unique identifier for the user")
-    message: str = Field(..., description="The content of the message")
-
-
-class TaskCreate(BaseModel):
-    user_id: str = Field(..., description="Unique identifier for the user")
-    description: str = Field(..., description="The content of the task")
-    due_date: Optional[datetime] = None
-
-
 class TaskOut(BaseModel):
     id: int = Field(..., description="Unique identifier for the task")
     user_id: str = Field(..., description="Unique identifier for the user")
@@ -26,24 +15,10 @@ class TaskOut(BaseModel):
     }
 
 
-class TelexResponse(BaseModel):
-    status: str = Field(..., description="Status of the operation")
-    message: str = Field(..., description="Detailed message about the operation")
-    task_id: Optional[int] = Field(None, description="Unique identifier for the task")
-    journal_id: Optional[int] = Field(None, description="Unique identifier for the journal entry")
-    summary: Optional[str] = Field(None, description="Summary of the journal entry")
-    sentiment: Optional[str] = Field(None, description="Sentiment analysis result")
-
-
 class CompleteTaskResponse(BaseModel):
     status: str = Field(..., description="Status of the operation")
     task_id: int = Field(..., description="Unique identifier for the task")
     status_after: str = Field(..., description="Status of the task after completion")
-
-
-class JournalCreate(BaseModel):
-    user_id: str = Field(..., description="Unique identifier for the user")
-    entry: str = Field(..., description="The content of the journal entry")
 
 
 class JournalOut(BaseModel):

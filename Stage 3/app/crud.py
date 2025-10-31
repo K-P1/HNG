@@ -1,17 +1,18 @@
 
 import logging
 from typing import Optional, List
+import logging
+from typing import Optional, List
 from app.database import SessionLocal
-from app import models
+from app.models.models import Task, Journal
 
 logger = logging.getLogger("crud")
 
 
-
-def create_task(user_id: str, description: str) -> models.Task:
+def create_task(user_id: str, description: str) -> Task:
     db = SessionLocal()
     try:
-        task = models.Task(user_id=user_id, description=description)
+        task = Task(user_id=user_id, description=description)
         db.add(task)
         db.commit()
         db.refresh(task)
@@ -24,11 +25,10 @@ def create_task(user_id: str, description: str) -> models.Task:
         db.close()
 
 
-
-def get_tasks(user_id: str) -> List[models.Task]:
+def get_tasks(user_id: str) -> List[Task]:
     db = SessionLocal()
     try:
-        tasks = db.query(models.Task).filter(models.Task.user_id == user_id).all()
+        tasks = db.query(Task).filter(Task.user_id == user_id).all()
         logger.info(f"Fetched {len(tasks)} tasks for user_id={user_id}")
         return tasks
     except Exception as e:
@@ -38,11 +38,10 @@ def get_tasks(user_id: str) -> List[models.Task]:
         db.close()
 
 
-
-def complete_task(task_id: int) -> Optional[models.Task]:
+def complete_task(task_id: int) -> Optional[Task]:
     db = SessionLocal()
     try:
-        task = db.query(models.Task).get(task_id)
+        task = db.query(Task).get(task_id)
         if not task:
             logger.warning(f"Task with id={task_id} not found for completion.")
             return None
@@ -58,11 +57,10 @@ def complete_task(task_id: int) -> Optional[models.Task]:
         db.close()
 
 
-
-def create_journal(user_id: str, entry: str, summary: Optional[str] = None, sentiment: Optional[str] = None) -> models.Journal:
+def create_journal(user_id: str, entry: str, summary: Optional[str] = None, sentiment: Optional[str] = None) -> Journal:
     db = SessionLocal()
     try:
-        j = models.Journal(user_id=user_id, entry=entry, summary=summary, sentiment=sentiment)
+        j = Journal(user_id=user_id, entry=entry, summary=summary, sentiment=sentiment)
         db.add(j)
         db.commit()
         db.refresh(j)
@@ -75,14 +73,13 @@ def create_journal(user_id: str, entry: str, summary: Optional[str] = None, sent
         db.close()
 
 
-
-def get_journals(user_id: str, limit: int = 20) -> List[models.Journal]:
+def get_journals(user_id: str, limit: int = 20) -> List[Journal]:
     db = SessionLocal()
     try:
         journals = (
-            db.query(models.Journal)
-            .filter(models.Journal.user_id == user_id)
-            .order_by(models.Journal.created_at.desc())
+            db.query(Journal)
+            .filter(Journal.user_id == user_id)
+            .order_by(Journal.created_at.desc())
             .limit(limit)
             .all()
         )
@@ -93,3 +90,4 @@ def get_journals(user_id: str, limit: int = 20) -> List[models.Journal]:
         raise
     finally:
         db.close()
+        raise
