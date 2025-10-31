@@ -23,9 +23,9 @@ def upgrade() -> None:
     op.create_table(
         'tasks',
         sa.Column('id', sa.Integer(), primary_key=True),
-        sa.Column('user_id', sa.String(), index=True, nullable=False),
+        sa.Column('user_id', sa.String(255), index=True, nullable=False),
         sa.Column('description', sa.Text(), nullable=False),
-        sa.Column('status', sa.String(), nullable=False, server_default='pending'),
+        sa.Column('status', sa.String(50), nullable=False, server_default='pending'),
         sa.Column('created_at', sa.DateTime(), nullable=False, server_default=sa.text('CURRENT_TIMESTAMP')),
         sa.Column('due_date', sa.DateTime(), nullable=True),
     )
@@ -36,10 +36,10 @@ def upgrade() -> None:
     op.create_table(
         'journals',
         sa.Column('id', sa.Integer(), primary_key=True),
-        sa.Column('user_id', sa.String(), index=True, nullable=False),
+        sa.Column('user_id', sa.String(255), index=True, nullable=False),
         sa.Column('entry', sa.Text(), nullable=False),
         sa.Column('summary', sa.Text(), nullable=True),
-        sa.Column('sentiment', sa.String(), nullable=True),
+        sa.Column('sentiment', sa.String(50), nullable=True),
         sa.Column('created_at', sa.DateTime(), nullable=False, server_default=sa.text('CURRENT_TIMESTAMP')),
     )
     op.create_index(op.f('ix_journals_id'), 'journals', ['id'], unique=False)

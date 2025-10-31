@@ -1,25 +1,25 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional
 from datetime import datetime
 
 class TelexMessage(BaseModel):
-    user_id: str
-    message: str
+    user_id: str = Field(..., description="Unique identifier for the user")
+    message: str = Field(..., description="The content of the message")
 
 
 class TaskCreate(BaseModel):
-    user_id: str
-    description: str
+    user_id: str = Field(..., description="Unique identifier for the user")
+    description: str = Field(..., description="The content of the task")
     due_date: Optional[datetime] = None
 
 
 class TaskOut(BaseModel):
-    id: int
-    user_id: str
-    description: str
-    status: str
-    created_at: datetime
-    due_date: Optional[datetime] = None
+    id: int = Field(..., description="Unique identifier for the task")
+    user_id: str = Field(..., description="Unique identifier for the user")
+    description: str = Field(..., description="The content of the task")
+    status: str = Field(..., description="The current status of the task")
+    created_at: datetime = Field(..., description="The creation timestamp of the task")
+    due_date: Optional[datetime] = Field(None, description="The due date of the task")
 
     model_config = {
         "from_attributes": True
@@ -27,32 +27,32 @@ class TaskOut(BaseModel):
 
 
 class TelexResponse(BaseModel):
-    status: str
-    message: str
-    task_id: Optional[int] = None
-    journal_id: Optional[int] = None
-    summary: Optional[str] = None
-    sentiment: Optional[str] = None
+    status: str = Field(..., description="Status of the operation")
+    message: str = Field(..., description="Detailed message about the operation")
+    task_id: Optional[int] = Field(None, description="Unique identifier for the task")
+    journal_id: Optional[int] = Field(None, description="Unique identifier for the journal entry")
+    summary: Optional[str] = Field(None, description="Summary of the journal entry")
+    sentiment: Optional[str] = Field(None, description="Sentiment analysis result")
 
 
 class CompleteTaskResponse(BaseModel):
-    status: str
-    task_id: int
-    status_after: str
+    status: str = Field(..., description="Status of the operation")
+    task_id: int = Field(..., description="Unique identifier for the task")
+    status_after: str = Field(..., description="Status of the task after completion")
 
 
 class JournalCreate(BaseModel):
-    user_id: str
-    entry: str
+    user_id: str = Field(..., description="Unique identifier for the user")
+    entry: str = Field(..., description="The content of the journal entry")
 
 
 class JournalOut(BaseModel):
-    id: int
-    user_id: str
-    entry: str
-    summary: Optional[str] = None
-    sentiment: Optional[str] = None
-    created_at: datetime
+    id: int = Field(..., description="Unique identifier for the journal entry")
+    user_id: str = Field(..., description="Unique identifier for the user")
+    entry: str = Field(..., description="The content of the journal entry")
+    summary: Optional[str] = Field(None, description="Summary of the journal entry")
+    sentiment: Optional[str] = Field(None, description="Sentiment analysis result")
+    created_at: datetime = Field(..., description="The creation timestamp of the journal entry")
 
     model_config = {
         "from_attributes": True

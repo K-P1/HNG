@@ -1,6 +1,7 @@
-from sqlalchemy import Column, Integer, String, Text, DateTime
+from sqlalchemy import Integer, String, Text, DateTime
 from sqlalchemy.ext.declarative import declarative_base
-from datetime import datetime
+from datetime import datetime, timezone
+from sqlalchemy.orm import Mapped, mapped_column
 
 Base = declarative_base()
 
@@ -8,21 +9,21 @@ Base = declarative_base()
 class Task(Base):
     __tablename__ = "tasks"
 
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(String, index=True)
-    description = Column(Text)
-    status = Column(String, default="pending")
-    created_at = Column(DateTime, default=datetime.utcnow)
-    due_date = Column(DateTime, nullable=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[str] = mapped_column(String(255), index=True)
+    description: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(50), default="pending")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    due_date: Mapped[datetime] = mapped_column(DateTime, nullable=True)
 
 
 class Journal(Base):
     __tablename__ = "journals"
 
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(String, index=True)
-    entry = Column(Text)
-    summary = Column(Text, nullable=True)
-    sentiment = Column(String, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[str] = mapped_column(String(255), index=True)
+    entry: Mapped[str] = mapped_column(Text)
+    summary: Mapped[str] = mapped_column(Text, nullable=True)
+    sentiment: Mapped[str] = mapped_column(String(50), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
 
