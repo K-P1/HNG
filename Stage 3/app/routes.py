@@ -67,11 +67,38 @@ AGENT_NAME = os.getenv("A2A_AGENT_NAME", os.getenv("AGENT_NAME", "reflectiveAssi
 
 @router.post(f"/a2a/agent/{AGENT_NAME}")
 async def reflective_assistant(request: Request):
-    """Lean route: accept the raw JSON-RPC payload and delegate handling to services.
+    # Read the raw body first so we can avoid raising JSONDecodeError when
+    # the incoming request has an empty body or non-JSON content.
+    body = await request.body()
+    # If DEBUG=true, log the raw body contents (helpful while integrating Telex).
+    # We use a tolerant decode so logging never raises.
+    try:
+        debug_enabled = os.getenv("DEBUG", "false").lower() in ("1", "true", "yes")
+    except Exception:
+        debug_enabled = False
 
-    The heavy lifting (parsing, validation, calling LLM/crud, and building the
-    JSON-RPC response) lives in `services.handle_a2a_jsonrpc` so routes remain thin.
-    """
-    payload = await request.json()
+    if debug_enabled:
+        try:
+            raw_text = body.decode("utf-8", errors="replace") if body else ""
+            logger.debug(f"A2A raw body: {raw_text}")
+        except Exception:
+            logger.debug("A2A raw body: <unprintable binary>")
+    if not body or body.strip() == b"":
+        logger.warning("Empty body received on A2A endpoint; delegating empty payload to service.")
+        payload = {}
+    else:
+        try:
+            # Preferred path: FastAPI's json() which respects request charset
+            payload = await request.json()
+        except Exception:
+            # Fallback: try a tolerant decode from raw bytes
+            try:
+                import json as _json
+
+                payload = _json.loads(body.decode("utf-8", errors="ignore"))
+            except Exception:
+                logger.exception("Failed to parse request body as JSON; delegating empty payload to service.")
+                payload = {}
+
     response = services.handle_a2a_jsonrpc(payload)
     return JSONResponse(response)
