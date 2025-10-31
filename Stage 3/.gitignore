@@ -26,4 +26,4 @@ Thumbs.db
 
 # personal files
 docs/
-app.log
+*.log
