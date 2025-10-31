@@ -24,7 +24,7 @@ Thumbs.db
 uv.lock
 
 # alembic
-alembic/versions/
+# alembic/versions/
 
 # personal files
 docs/
