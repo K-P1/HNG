@@ -19,6 +19,9 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    # Drop tables if they exist
+    op.execute("DROP TABLE IF EXISTS tasks;")
+    op.execute("DROP TABLE IF EXISTS journals;")
     # tasks table
     op.create_table(
         'tasks',
