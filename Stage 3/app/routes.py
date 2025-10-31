@@ -1,9 +1,15 @@
 
 import logging
-from fastapi import APIRouter, HTTPException
+import os
+from dotenv import load_dotenv
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import JSONResponse
 from typing import List
 from app import schemas
 from app import services
+
+# Load .env so the agent name can be provided there
+load_dotenv()
 
 logger = logging.getLogger("routes")
 
@@ -15,22 +21,6 @@ router = APIRouter(tags=["Core"])
 def health():
     logger.info("Health check endpoint called.")
     return {"status": "ok"}
-
-
-@router.post("/telex-agent", response_model=schemas.TelexResponse)
-
-def telex_agent(payload: schemas.TelexMessage):
-    logger.info(f"/telex-agent called for user_id={payload.user_id}")
-    try:
-        response = services.process_telex_message(payload.user_id, payload.message)
-        logger.info(f"Telex agent processed successfully for user_id={payload.user_id}")
-        return response
-    except HTTPException as he:
-        logger.warning(f"HTTPException in telex_agent for user_id={payload.user_id}: {he.detail}")
-        raise
-    except Exception as e:
-        logger.error(f"LLM error in telex_agent for user_id={payload.user_id}: {e}")
-        raise HTTPException(status_code=503, detail=f"LLM error: {e}")
 
 
 @router.get("/tasks", response_model=List[schemas.TaskOut])
@@ -70,3 +60,18 @@ def get_journals(user_id: str, limit: int = 20):
     except Exception as e:
         logger.error(f"Failed to fetch journals for user_id={user_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch journals")
+
+
+AGENT_NAME = os.getenv("A2A_AGENT_NAME", os.getenv("AGENT_NAME", "reflectiveAssistant"))
+
+
+@router.post(f"/a2a/agent/{AGENT_NAME}")
+async def reflective_assistant(request: Request):
+    """Lean route: accept the raw JSON-RPC payload and delegate handling to services.
+
+    The heavy lifting (parsing, validation, calling LLM/crud, and building the
+    JSON-RPC response) lives in `services.handle_a2a_jsonrpc` so routes remain thin.
+    """
+    payload = await request.json()
+    response = services.handle_a2a_jsonrpc(payload)
+    return JSONResponse(response)

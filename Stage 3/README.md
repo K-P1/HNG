@@ -95,31 +95,74 @@ Interactive docs: http://127.0.0.1:8000/docs
 
 - GET `/health` → `{ "status": "ok" }`
 
-- POST `/telex-agent` (Groq-powered; fails fast if misconfigured)
+- A2A (Agent-to-Agent) JSON-RPC endpoint — Telex integration
 
-  - Request body:
-    ```json
-    { "user_id": "u1", "message": "Add buy milk to my todo" }
-    ```
-  - Response (todo example):
+  The app exposes a JSON-RPC 2.0-compatible A2A endpoint that Telex (or
+  another agent) can call. The default path is:
+
+  ```text
+  POST /a2a/agent/reflectiveAssistant
+  ```
+
+  This path is dynamic and controlled by the `A2A_AGENT_NAME` environment
+  variable (fallback `AGENT_NAME`). To guarantee the exact path above, set
+  `A2A_AGENT_NAME=reflectiveAssistant` in your `.env` (see `.env.example`).
+
+  - Incoming request (example JSON-RPC 2.0 payload):
+
     ```json
     {
-      "status": "ok",
-      "message": "Added \"buy milk\" to your todo list.",
-      "task_id": 1
+      "jsonrpc": "2.0",
+      "id": "b9d4caa5ecf749e0a59ba5614d01f266",
+      "method": "message/send",
+      "params": {
+        "message": {
+          "role": "user",
+          "parts": [
+            {
+              "kind": "text",
+              "text": "hi i want to submit my project tomorrow"
+            }
+          ]
+        }
+      }
     }
     ```
-  - Response (journal example):
+
+  - Expected reply (JSON-RPC 2.0, Telex-friendly):
+
     ```json
     {
-      "status": "ok",
-      "message": "Journal saved.",
-      "summary": "...",
-      "sentiment": "positive",
-      "journal_id": 1
+      "jsonrpc": "2.0",
+      "id": "b9d4caa5ecf749e0a59ba5614d01f266",
+      "result": {
+        "messages": [
+          {
+            "role": "assistant",
+            "content": "Got it — I’ve added that to your todo list and scheduled a reminder for tomorrow!"
+          }
+        ],
+        "metadata": {
+          "status": "ok",
+          "task_id": 123
+        }
+      }
     }
     ```
-  - Failure (LLM misconfigured/unavailable): HTTP 503 with `{ "detail": "LLM error: ..." }`
+
+  - Notes about the JSON-RPC contract and `id` handling:
+
+    | Case                | What You Do                                                           |
+    | ------------------- | --------------------------------------------------------------------- |
+    | Telex sends an `id` | Echo it back exactly.                                                 |
+    | No `id` in request  | Generate one (UUID).                                                  |
+    | Never               | Return a response without an `"id"`. It breaks the JSON-RPC contract. |
+
+  - The service will try to extract text from several common shapes
+    (`params.message.parts`, `params.message.text`, `params.text`). Any
+    internal fields (status, task_id, summary, sentiment) are included
+    under `result.metadata` while the user-facing reply is in
+    `result.messages[0].content`.
 
 - GET `/tasks?user_id=u1` → list of tasks (TaskOut[])
 

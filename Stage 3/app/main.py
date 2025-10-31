@@ -1,4 +1,3 @@
-
 import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,15 +16,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger("main")
 logger.info("Logging is set up. Application starting...")
-
-# Alembic migration sync
-from alembic.config import Config
-from alembic import command
-
-alembic_cfg = Config("alembic.ini")
-# Stamp the DB to head before upgrade (forces sync)
-command.stamp(alembic_cfg, "head")
-command.upgrade(alembic_cfg, "head")
 
 
 @asynccontextmanager
