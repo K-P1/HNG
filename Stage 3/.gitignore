@@ -20,9 +20,6 @@ app.db
 .DS_Store
 Thumbs.db
 
-# Locks
-uv.lock
-
 # alembic
 # alembic/versions/
 
