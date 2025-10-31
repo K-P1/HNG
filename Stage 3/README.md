@@ -88,7 +88,7 @@ Interactive docs: http://127.0.0.1:8000/docs
 - `DATABASE_URL` – default `sqlite:///./app.db`; Postgres: `postgresql+psycopg2://user:pass@host:5432/dbname`
 - `GROQ_API_KEY` – required (no fallbacks)
 - `LLM_PROVIDER` – must be `groq`
-- `GROQ_MODEL` – default `llama-3.1-70b-versatile`
+- `GROQ_MODEL` – default `llama-3.3-70b-versatile`
 - `ENV`, `DEBUG` – optional app flags
 
 ## API

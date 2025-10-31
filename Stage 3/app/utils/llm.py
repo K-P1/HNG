@@ -32,7 +32,7 @@ def _get_groq_client():
 def _groq_chat(messages: list[dict[str, str]], *, response_json: bool = False, temperature: float = 0.2, max_tokens: int = 256) -> str:
     _require_env()
     client = _get_groq_client()
-    model = os.getenv("GROQ_MODEL", "llama-3.1-70b-versatile")
+    model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
     kwargs: Dict[str, Any] = {
         "model": model,
         "messages": messages,
