@@ -2,6 +2,9 @@
 
 FastAPI-powered AI agent that classifies incoming messages as todos or journal entries, stores them in a database, and replies concisely. Groq is used as the agent brain (no fallbacks—misconfiguration fails fast).
 
+**Live API:** [hng-production-2944.up.railway.app](hng-production-2944.up.railway.app)
+**Swagger Docs:** [hng-production-2944.up.railway.app/docs](hng-production-2944.up.railway.app/docs)
+
 ## Features
 
 - Groq-powered intent classification (todo | journal | unknown)
