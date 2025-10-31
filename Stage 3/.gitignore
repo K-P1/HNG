@@ -21,7 +21,8 @@ app.db
 Thumbs.db
 
 # alembic
-# alembic/versions/
+alembic/versions/
+alembic/versions/
 
 # personal files
 docs/
