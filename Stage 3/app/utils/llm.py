@@ -178,20 +178,80 @@ def plan_actions(message: str) -> Dict[str, Any]:
 
     # Normalize minimal structure
     actions = data.get("actions")
+    # Also accept nested shape { "plan": { "actions": [...] } }
+    if actions is None and isinstance(data.get("plan"), dict):
+        actions = data["plan"].get("actions")
+
+    # Log the raw plan (truncated) to diagnose empty-actions fallbacks
+    try:
+        preview = json.dumps(data)
+        if len(preview) > 500:
+            preview = preview[:500] + "..."
+        logger.debug("plan_actions raw JSON preview: %s", preview)
+    except Exception:
+        pass
+
     if not isinstance(actions, list):
         logger.warning("plan_actions: missing or invalid 'actions'; returning empty plan")
         return {"actions": []}
-    # Basic sanitization
+    # Basic sanitization and normalization
     cleaned: List[Dict[str, Any]] = []
+
+    type_map = {
+        # tasks
+        "add_task": "create_task",
+        "create_todo": "create_task",
+        "add_todo": "create_task",
+        "show_tasks": "list_tasks",
+        "list_todos": "list_tasks",
+        "get_tasks": "list_tasks",
+        "complete_task": "update_task",
+        "update_task_status": "update_task",
+        "remove_task": "delete_task",
+        "delete_todo": "delete_task",
+        # journals
+        "add_journal": "create_journal",
+        "create_note": "create_journal",
+        "show_journals": "list_journals",
+        "list_notes": "list_journals",
+        "update_note": "update_journal",
+        "remove_note": "delete_journal",
+    }
+
     for a in actions:
         if not isinstance(a, dict):
             continue
         t = str(a.get("type", "")).strip()
+        t = type_map.get(t, t)
         p = a.get("params") or {}
+        if not isinstance(p, dict):
+            p = {}
+
+        # Param normalizations
+        if t == "create_task":
+            # Allow title as alias for description
+            if "description" not in p and isinstance(p.get("title"), str):
+                p["description"] = p.get("title")
+        elif t in {"update_task", "delete_task"}:
+            if "description" not in p and "query" not in p and isinstance(p.get("title"), str):
+                p["description"] = p.get("title")
+            # Map boolean completed -> status for update
+            if t == "update_task" and "completed" in p and "status" not in p:
+                try:
+                    if bool(p.get("completed")):
+                        p["status"] = "completed"
+                except Exception:
+                    pass
+        elif t == "update_journal":
+            sent = p.get("sentiment")
+            if isinstance(sent, dict) and "label" in sent:
+                p["sentiment"] = sent.get("label")
+
         allowed = {
             "create_task", "list_tasks", "update_task", "delete_task",
             "create_journal", "list_journals", "update_journal", "delete_journal",
         }
         if t in allowed and isinstance(p, dict):
             cleaned.append({"type": t, "params": p})
+    logger.debug("plan_actions cleaned actions count: %d", len(cleaned))
     return {"actions": cleaned}

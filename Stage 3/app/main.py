@@ -23,7 +23,11 @@ async def lifespan(app):
     logger.info("App startup: initializing database.")
     await database.init_db_async()
     yield
-    logger.info("App shutdown: cleanup complete.")
+    # Dispose connections before the event loop ends to avoid noisy cleanup warnings
+    try:
+        await database.shutdown_db_async()
+    finally:
+        logger.info("App shutdown: cleanup complete.")
 
 app = FastAPI(title="Reflective Assistant - Telex Agent", lifespan=lifespan)
 

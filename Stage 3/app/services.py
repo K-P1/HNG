@@ -71,25 +71,10 @@ async def process_telex_message(user_id: str, message: str) -> dict:
     plan = await asyncio.to_thread(llm.plan_actions, text)
     actions = plan.get("actions", []) if isinstance(plan, dict) else []
 
-    # Fallback to legacy single-intent path if no actions are returned
+    # If planner did not produce actions, fail fast (no legacy heuristics)
     if not actions:
-        intent = await asyncio.to_thread(llm.classify_intent, text)
-        logger.info("Fallback intent classified as '%s' for user_id=%s", intent, user_id)
-        if intent == "todo":
-            try:
-                action = await asyncio.to_thread(llm.extract_todo_action, text)
-                task = await crud.create_task(user_id, action)
-                return {"status": "ok", "message": f'Added "{task.description}" to your todo list.', "task_id": task.id}
-            except Exception:
-                raise HTTPException(status_code=500, detail="Failed to create task")
-        if intent == "journal":
-            try:
-                sentiment, summary = await asyncio.to_thread(llm.analyze_entry, text)
-                journal = await crud.create_journal(user_id, text, summary, sentiment)
-                return {"status": "ok", "message": "Journal saved.", "summary": summary, "sentiment": sentiment, "journal_id": journal.id}
-            except Exception:
-                raise HTTPException(status_code=500, detail="Failed to create journal entry")
-        raise HTTPException(status_code=400, detail="Could not determine intent (todo or journal).")
+        logger.error("Planner returned no actions for user_id=%s; message='%s'", user_id, text)
+        raise HTTPException(status_code=400, detail="Planner returned no actions; unable to determine operations from your message.")
 
     # Execute actions sequentially and collect a conversational summary
     responses: List[str] = []
@@ -243,8 +228,9 @@ async def process_telex_message(user_id: str, message: str) -> dict:
                 metadata["executed"].append({"type": a_type, "journal_id": int(jid)})
 
             else:
-                # Unknown action type — ignore but note
-                metadata["executed"].append({"type": a_type, "skipped": True})
+                # Unknown action type — fail fast so issues are visible
+                logger.error("Unsupported action type from planner: %s", a_type)
+                raise HTTPException(status_code=400, detail=f"Unsupported action type: {a_type}")
         except HTTPException:
             raise
         except Exception as e:

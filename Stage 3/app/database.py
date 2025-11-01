@@ -40,3 +40,11 @@ async def init_db_async():
     except Exception as e:
         logger.error(f"Failed to create database tables: {e}")
 
+async def shutdown_db_async():
+    """Dispose the async engine on shutdown to close pools cleanly."""
+    try:
+        await async_engine.dispose()
+        logger.info("Database engine disposed successfully.")
+    except Exception as e:
+        logger.warning("Error disposing database engine: %s", e)
+

@@ -140,6 +140,11 @@ async def reflective_assistant(request: Request):
                 await send_telex_followup(push_url, msg)
             except Exception as e:
                 logger.exception("Error in background follow-up task: %s", e)
+                # Push the error back so the user is informed quickly
+                try:
+                    await send_telex_followup(push_url, f"Error: {e}")
+                except Exception:
+                    pass
 
         asyncio.create_task(process_followup())
         return JSONResponse(immediate_reply)
