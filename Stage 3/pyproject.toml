@@ -20,6 +20,7 @@ dependencies = [
     "groq",
     "alembic",
     "mysql-connector-python>=9.5.0",
+    "pymysql>=1.1.2",
 ]
 
 [tool.setuptools.packages.find]
