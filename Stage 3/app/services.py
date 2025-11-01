@@ -93,11 +93,20 @@ async def process_telex_message(user_id: str, message: str) -> dict:
             except Exception:
                 return None
         if isinstance(maybe, str):
+            # Try a few strict formats first
             for fmt in ("%Y-%m-%d", "%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%SZ"):
                 try:
                     return datetime.strptime(maybe, fmt)
                 except Exception:
                     continue
+            # Fall back to natural language parsing if available
+            try:
+                import dateparser  # type: ignore
+                dt = dateparser.parse(maybe)
+                if dt:
+                    return dt
+            except Exception:
+                pass
         return None
 
     for a in actions:
@@ -106,9 +115,17 @@ async def process_telex_message(user_id: str, message: str) -> dict:
         try:
             if a_type == "create_task":
                 desc = (params.get("description") or text).strip()
-                due = parse_dt(params.get("due_date"))
+                # Accept both due_date and due from planner normalization
+                due = parse_dt(params.get("due_date") or params.get("due"))
                 task = await crud.create_task(user_id, desc, due_date=due)
-                responses.append(f"Added \"{task.description}\" to your todo list (id: {task.id}).")
+                if due:
+                    try:
+                        due_str = due.strftime("%b %d, %Y %I:%M %p")
+                    except Exception:
+                        due_str = str(due)
+                    responses.append(f"Added \"{task.description}\" to your todo list (id: {task.id}, due: {due_str}).")
+                else:
+                    responses.append(f"Added \"{task.description}\" to your todo list (id: {task.id}).")
                 metadata["executed"].append({"type": a_type, "task_id": task.id})
 
             elif a_type == "list_tasks":

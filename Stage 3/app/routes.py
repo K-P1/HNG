@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 import asyncio
 from app.utils.telex_push import send_telex_followup
+from app.utils import llm
 from typing import List
 from app import schemas
 from app import services
@@ -136,12 +137,52 @@ async def reflective_assistant(request: Request):
     # If we have a push URL, send immediate acknowledgement and spawn follow-up
     if push_url:
         request_id = payload.get("id", "1")
+        # Try to plan steps quickly to show a preview in the immediate acknowledgement
+        preview_text = "I'll compile your pending to-do list for you. Just a moment while I fetch that information!"
+        try:
+            plan = await asyncio.to_thread(llm.plan_actions, user_message)
+            acts = plan.get("actions", []) if isinstance(plan, dict) else []
+            if acts:
+                def step_label(a: dict) -> str:
+                    t = (a.get("type") or "").strip()
+                    p = a.get("params") or {}
+                    if t == "create_task":
+                        d = (p.get("description") or p.get("title") or "task").strip()
+                        due = p.get("due_date") or p.get("due")
+                        return f"create task \"{d}\"" + (f" (due: {due})" if isinstance(due, str) and due.strip() else "")
+                    if t == "list_tasks":
+                        return "list tasks"
+                    if t == "update_task":
+                        target = p.get("id") or p.get("description") or p.get("query") or p.get("title") or "task"
+                        status = p.get("status")
+                        if status:
+                            return f"update task {target} (status: {status})"
+                        return f"update task {target}"
+                    if t == "delete_task":
+                        target = p.get("id") or p.get("description") or p.get("query") or p.get("title") or "task"
+                        return f"delete task {target}"
+                    if t == "create_journal":
+                        return "create journal entry"
+                    if t == "list_journals":
+                        return "list journals"
+                    if t == "update_journal":
+                        return "update journal"
+                    if t == "delete_journal":
+                        return "delete journal"
+                    return t or "step"
+
+                labels = [step_label(a) for a in acts]
+                preview_text = f"Planned steps ({len(labels)}): " + "; ".join(labels) + ". I'll post results shortly."
+        except Exception:
+            # Keep the generic preview if planning preview fails
+            pass
+
         immediate_reply = {
             "jsonrpc": "2.0",
             "id": request_id,
             "result": {
                 "messages": [
-                    {"role": "assistant", "content": "I'll compile your pending to-do list for you. Just a moment while I fetch that information!"}
+                    {"role": "assistant", "content": preview_text}
                 ],
                 "metadata": {"status": "processing"}
             }
@@ -155,12 +196,12 @@ async def reflective_assistant(request: Request):
                     msg = result.get("message") or "Done."
                 else:
                     msg = str(result)
-                await send_telex_followup(str(push_url), msg, push_config, request_id)
+                await send_telex_followup(str(push_url), "[Follow-up]\n\n" + msg, push_config, request_id)
             except Exception as e:
                 logger.exception("Error in background follow-up task: %s", e)
                 # Push the error back so the user is informed quickly
                 try:
-                    await send_telex_followup(str(push_url), f"Error: {e}", push_config, request_id)
+                    await send_telex_followup(str(push_url), f"[Follow-up]\n\nError: {e}", push_config, request_id)
                 except Exception:
                     pass
 
