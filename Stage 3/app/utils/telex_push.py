@@ -55,6 +55,8 @@ async def send_telex_followup(
             "id": request_id or str(uuid.uuid4()),
             "method": "message/send",
             "params": {
+                # Telex requires a top-level kind within params
+                "kind": "message",
                 "message": {
                     # Required by Telex: unique message id
                     "messageId": str(uuid.uuid4()),
