@@ -4,6 +4,8 @@ import os
 from dotenv import load_dotenv
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
+import asyncio
+from app.utils.telex_push import send_telex_followup
 from typing import List
 from app import schemas
 from app import services
@@ -24,10 +26,10 @@ def health():
 
 @router.get("/tasks", response_model=List[schemas.TaskOut])
 
-def get_tasks(user_id: str):
+async def get_tasks(user_id: str):
     logger.info(f"/tasks called for user_id={user_id}")
     try:
-        tasks = services.list_tasks(user_id)
+        tasks = await services.list_tasks(user_id)
         logger.info(f"Fetched {len(tasks)} tasks for user_id={user_id}")
         return tasks
     except Exception as e:
@@ -37,10 +39,10 @@ def get_tasks(user_id: str):
 
 @router.post("/tasks/complete", response_model=schemas.CompleteTaskResponse)
 
-def post_complete_task(task_id: int):
+async def post_complete_task(task_id: int):
     logger.info(f"/tasks/complete called for task_id={task_id}")
     try:
-        result = services.complete_task(task_id)
+        result = await services.complete_task(task_id)
         logger.info(f"Task id={task_id} completion processed.")
         return result
     except Exception as e:
@@ -50,10 +52,10 @@ def post_complete_task(task_id: int):
 
 @router.get("/journal", response_model=List[schemas.JournalOut])
 
-def get_journals(user_id: str, limit: int = 20):
+async def get_journals(user_id: str, limit: int = 20):
     logger.info(f"/journal called for user_id={user_id}, limit={limit}")
     try:
-        journals = services.list_journals(user_id, limit)
+        journals = await services.list_journals(user_id, limit)
         logger.info(f"Fetched {len(journals)} journals for user_id={user_id}")
         return journals
     except Exception as e:
@@ -69,6 +71,9 @@ AGENT_NAME = os.getenv("A2A_AGENT_NAME", os.getenv("AGENT_NAME", "reflectiveAssi
 async def reflective_assistant(request: Request):
     """A lightweight A2A entrypoint that validates the incoming JSON-RPC
     payload against our A2A models.
+    If the incoming payload contains a pushNotificationConfig.url we send an
+    immediate acknowledgement and spawn a background task that posts the
+    final follow-up to the provided push URL.
     """
     try:
         payload = await request.json()
@@ -83,5 +88,112 @@ async def reflective_assistant(request: Request):
             logger.exception("Failed to parse request body as JSON; using empty payload.")
             payload = {}
 
-    response = services.handle_jsonrpc_payload(payload)
+    # Extract params, message, user and push URL if present
+    params = payload.get("params", {}) or {}
+    message_obj = params.get("message") or {}
+    # Try to pull text from parts like services does
+    user_message = ""
+    parts = message_obj.get("parts") if isinstance(message_obj, dict) else None
+    if parts and isinstance(parts, list):
+        texts = []
+        for p in parts:
+            if isinstance(p, dict) and p.get("kind") == "text" and p.get("text"):
+                texts.append(p.get("text"))
+            elif isinstance(p, dict) and p.get("text"):
+                texts.append(p.get("text"))
+            elif isinstance(p, str):
+                texts.append(p)
+        user_message = " ".join(texts).strip()
+    if not user_message:
+        user_message = (message_obj.get("text") if isinstance(message_obj, dict) else None) or params.get("text") or ""
+
+    user_id = params.get("user_id") or (message_obj.get("user_id") if isinstance(message_obj, dict) else None) or params.get("userId") or "unknown-user"
+
+    push_url = None
+    try:
+        push_url = params.get("configuration", {}).get("pushNotificationConfig", {}).get("url")
+    except Exception:
+        push_url = None
+
+    # If we have a push URL, send immediate acknowledgement and spawn follow-up
+    if push_url:
+        request_id = payload.get("id", "1")
+        immediate_reply = {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "result": {
+                "messages": [
+                    {"role": "assistant", "content": "I'll compile your pending to-do list for you. Just a moment while I fetch that information!"}
+                ],
+                "metadata": {"status": "processing"}
+            }
+        }
+
+        async def process_followup():
+            # import here to avoid circular imports at module import time
+            try:
+                from app import crud
+                from datetime import datetime
+
+                tasks = []
+                try:
+                    tasks = await crud.get_tasks(user_id)
+                except Exception:
+                    tasks = []
+
+                if not tasks:
+                    msg = "You currently have no pending tasks. 🎉"
+                else:
+                    total = len(tasks)
+                    pending_count = sum(1 for t in tasks if getattr(t, "status", "pending") != "completed")
+                    header = f"Here are your tasks (total: {total}, pending: {pending_count}):"
+                    lines = [header, ""]
+
+                    for t in tasks:
+                        desc = getattr(t, "description", None) or str(t)
+                        status = getattr(t, "status", None) or "pending"
+                        tid = getattr(t, "id", None)
+                        created = getattr(t, "created_at", None)
+                        due = getattr(t, "due_date", None)
+
+                        # Friendly human-readable date formatting
+                        def friendly(dt):
+                            if not dt:
+                                return None
+                            try:
+                                # Prefer a timezone-aware friendly format
+                                if hasattr(dt, "tzinfo") and dt.tzinfo is not None:
+                                    return dt.strftime("%b %d, %Y %I:%M %p %Z")
+                                return dt.strftime("%b %d, %Y %I:%M %p")
+                            except Exception:
+                                try:
+                                    return str(dt)
+                                except Exception:
+                                    return "N/A"
+
+                        created_str = friendly(created) or "N/A"
+                        due_str = friendly(due)
+
+                        parts = [f"- {desc}", f"status: {status}"]
+                        if tid is not None:
+                            parts.append(f"id: {tid}")
+                        parts.append(f"created: {created_str}")
+                        if due_str:
+                            parts.append(f"due: {due_str}")
+
+                        lines.append(" (".join([parts[0], ", ".join(parts[1:])]) + ")")
+
+                    lines.append("")
+                    lines.append("Tip: reply 'complete <id>' to mark a task as done.")
+                    msg = "\n".join(lines)
+
+                await send_telex_followup(push_url, msg)
+            except Exception as e:
+                logger.exception("Error in background follow-up task: %s", e)
+
+        asyncio.create_task(process_followup())
+        return JSONResponse(immediate_reply)
+
+    # Fallback to the async JSON-RPC handler if no push URL
+    response = await services.handle_jsonrpc_payload(payload)
     return JSONResponse(response)

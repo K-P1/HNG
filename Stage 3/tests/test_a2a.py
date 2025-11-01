@@ -13,8 +13,8 @@ import app.services as services
 def test_a2a_reflective_assistant_monkeypatched(monkeypatch):
     client = TestClient(app)
 
-    # Stub the services.process_telex_message to avoid external LLM/DB calls
-    def fake_process(user_id, message):
+    # Stub the async services.process_telex_message to avoid external LLM/DB calls
+    async def fake_process(user_id, message):
         return {"status": "ok", "message": "Got it — I scheduled your task.", "task_id": 1}
 
     monkeypatch.setattr(services, "process_telex_message", fake_process)

@@ -1,25 +1,26 @@
 import logging
+import asyncio
 from fastapi import HTTPException
 from app import crud
 from app.utils import llm
 import uuid
-from fastapi import HTTPException
 from typing import Any, Dict
 from app.models.a2a import JSONRPCRequest
 
 logger = logging.getLogger("services")
 
 
-
-def process_telex_message(user_id: str, message: str) -> dict:
+async def process_telex_message(user_id: str, message: str) -> dict:
     """Classify message and perform the corresponding action using Groq."""
     logger.info(f"Processing telex message for user_id={user_id}")
-    intent = llm.classify_intent(message)
+    # llm helpers are synchronous (blocking). Run them in a thread to avoid
+    # blocking the event loop.
+    intent = await asyncio.to_thread(llm.classify_intent, message)
     logger.info(f"Intent classified as '{intent}' for user_id={user_id}")
     if intent == "todo":
         try:
-            action = llm.extract_todo_action(message)
-            task = crud.create_task(user_id, action)
+            action = await asyncio.to_thread(llm.extract_todo_action, message)
+            task = await crud.create_task(user_id, action)
             logger.info(f"Task created for user_id={user_id}, task_id={task.id}")
             return {"status": "ok", "message": f'Added "{task.description}" to your todo list.', "task_id": task.id}
         except Exception as e:
@@ -28,8 +29,8 @@ def process_telex_message(user_id: str, message: str) -> dict:
 
     if intent == "journal":
         try:
-            sentiment, summary = llm.analyze_entry(message)
-            journal = crud.create_journal(user_id, message, summary, sentiment)
+            sentiment, summary = await asyncio.to_thread(llm.analyze_entry, message)
+            journal = await crud.create_journal(user_id, message, summary, sentiment)
             logger.info(f"Journal entry created for user_id={user_id}, journal_id={journal.id}")
             return {
                 "status": "ok",
@@ -46,11 +47,10 @@ def process_telex_message(user_id: str, message: str) -> dict:
     raise HTTPException(status_code=400, detail="Could not determine intent (todo or journal).")
 
 
-
-def list_tasks(user_id: str):
+async def list_tasks(user_id: str):
     logger.info(f"Listing tasks for user_id={user_id}")
     try:
-        tasks = crud.get_tasks(user_id)
+        tasks = await crud.get_tasks(user_id)
         logger.info(f"Fetched {len(tasks)} tasks for user_id={user_id}")
         return tasks
     except Exception as e:
@@ -58,11 +58,10 @@ def list_tasks(user_id: str):
         raise HTTPException(status_code=500, detail="Failed to list tasks")
 
 
-
-def complete_task(task_id: int) -> dict:
+async def complete_task(task_id: int) -> dict:
     logger.info(f"Completing task id={task_id}")
     try:
-        t = crud.complete_task(task_id)
+        t = await crud.complete_task(task_id)
         if not t:
             logger.warning(f"Task id={task_id} not found for completion.")
             raise HTTPException(status_code=404, detail="Task not found")
@@ -75,11 +74,10 @@ def complete_task(task_id: int) -> dict:
         raise HTTPException(status_code=500, detail="Failed to complete task")
 
 
-
-def list_journals(user_id: str, limit: int = 20):
+async def list_journals(user_id: str, limit: int = 20):
     logger.info(f"Listing journals for user_id={user_id}, limit={limit}")
     try:
-        journals = crud.get_journals(user_id, limit)
+        journals = await crud.get_journals(user_id, limit)
         logger.info(f"Fetched {len(journals)} journals for user_id={user_id}")
         return journals
     except Exception as e:
@@ -87,7 +85,7 @@ def list_journals(user_id: str, limit: int = 20):
         raise HTTPException(status_code=500, detail="Failed to list journals")
 
 
-def handle_a2a_jsonrpc(payload: Dict[str, Any]) -> Dict[str, Any]:
+async def handle_a2a_jsonrpc(payload: Dict[str, Any]) -> Dict[str, Any]:
     request_id = payload.get("id")
     if not request_id:
         # Generate a UUID if no id was provided to respect JSON-RPC contract
@@ -120,7 +118,7 @@ def handle_a2a_jsonrpc(payload: Dict[str, Any]) -> Dict[str, Any]:
         text = str(params)
 
     try:
-        service_result = process_telex_message(user_id, text)
+        service_result = await process_telex_message(user_id, text)
         reply_text = service_result.get("message", "") if isinstance(service_result, dict) else str(service_result)
         metadata = {k: v for k, v in service_result.items() if k != "message"} if isinstance(service_result, dict) else {}
         result = {
@@ -145,7 +143,7 @@ def handle_a2a_jsonrpc(payload: Dict[str, Any]) -> Dict[str, Any]:
     return {"jsonrpc": "2.0", "id": request_id, "result": result}
 
 
-def handle_jsonrpc_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+async def handle_jsonrpc_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     try:
         JSONRPCRequest.model_validate(payload)
     except Exception as e:
@@ -158,7 +156,7 @@ def handle_jsonrpc_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         }
 
     try:
-        return handle_a2a_jsonrpc(payload)
+        return await handle_a2a_jsonrpc(payload)
     except Exception as e:
         logger.exception("Unhandled exception while handling A2A payload: %s", e)
         request_id = payload.get("id") or ""
