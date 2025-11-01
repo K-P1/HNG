@@ -40,12 +40,3 @@ async def init_db_async():
     except Exception as e:
         logger.error(f"Failed to create database tables: {e}")
 
-
-def init_db():
-    """Synchronous wrapper for creating DB tables; uses asyncio.run()."""
-    import asyncio
-
-    try:
-        asyncio.run(init_db_async())
-    except Exception as e:
-        logger.error("Failed to run init_db_async(): %s", e)

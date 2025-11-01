@@ -21,7 +21,7 @@ logger.info("Logging is set up. Application starting...")
 @asynccontextmanager
 async def lifespan(app):
     logger.info("App startup: initializing database.")
-    database.init_db()
+    await database.init_db_async()
     yield
     logger.info("App shutdown: cleanup complete.")
 
