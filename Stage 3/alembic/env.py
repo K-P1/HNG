@@ -3,7 +3,7 @@ import sys
 from logging.config import fileConfig
 
 import asyncio
-from sqlalchemy import pool
+from sqlalchemy.pool import NullPool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import create_async_engine
 from alembic import context  # type: ignore[attr-defined]
@@ -93,12 +93,20 @@ def run_migrations_online() -> None:
     # Use an async engine for online migrations
     # Use the validated `db_url` above (assert to help type checkers).
     assert isinstance(db_url, str)
-    connectable = create_async_engine(db_url, future=True)
+    connectable = create_async_engine(
+        db_url,
+        future=True,
+        pool_pre_ping=True,
+        # Avoid pooled connections lingering across event loop shutdown
+        poolclass=NullPool,
+    )
 
     async def _run():
         async with connectable.connect() as connection:
             # Run migrations in a sync context
             await connection.run_sync(do_run_migrations)
+        # Ensure all connections/transports are closed before the loop ends
+        await connectable.dispose()
 
     asyncio.run(_run())
 
