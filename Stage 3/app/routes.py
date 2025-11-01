@@ -117,6 +117,21 @@ async def reflective_assistant(request: Request):
     except Exception:
         push_url = None
         push_config = {}
+    try:
+        # Redacted visibility into push config presence (no secrets leaked)
+        schemes = None
+        auth = push_config.get("authentication") if isinstance(push_config, dict) else None
+        if isinstance(auth, dict):
+            s = auth.get("schemes")
+            schemes = s if isinstance(s, list) else None
+        logger.info(
+            "Telex push config received: url=%s, token_present=%s, schemes=%s",
+            push_url,
+            bool(push_config.get("token")) if isinstance(push_config, dict) else False,
+            schemes,
+        )
+    except Exception:
+        pass
 
     # If we have a push URL, send immediate acknowledgement and spawn follow-up
     if push_url:

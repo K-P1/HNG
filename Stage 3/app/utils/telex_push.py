@@ -46,6 +46,12 @@ async def send_telex_followup(
         headers["X-TELEX-API-KEY"] = str(token)
         if scheme:
             headers["Authorization"] = f"{scheme} {token}"
+    logger.debug(
+        "Telex follow-up auth prepared: scheme=%s, token_present=%s, x_api=%s",
+        scheme,
+        bool(token),
+        "set" if headers.get("X-TELEX-API-KEY") else "unset",
+    )
 
     is_telex_webhook = "/a2a/webhooks/" in (push_url or "")
     if is_telex_webhook:
