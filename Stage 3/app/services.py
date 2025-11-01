@@ -4,47 +4,217 @@ from fastapi import HTTPException
 from app import crud
 from app.utils import llm
 import uuid
-from typing import Any, Dict
+from typing import Any, Dict, List
 from app.models.a2a import JSONRPCRequest
 
 logger = logging.getLogger("services")
 
 
+def _format_tasks_list(tasks: List) -> str:
+    """Human-friendly task list used for both immediate replies and follow-ups."""
+    if not tasks:
+        return "You currently have no pending tasks."
+
+    total = len(tasks)
+    pending_count = sum(1 for t in tasks if getattr(t, "status", "pending") != "completed")
+    header = f"Here are your tasks (total: {total}, pending: {pending_count}):"
+    lines = [header, ""]
+
+    from datetime import datetime
+
+    def friendly(dt):
+        if not dt:
+            return None
+        try:
+            if hasattr(dt, "tzinfo") and dt.tzinfo is not None:
+                return dt.strftime("%b %d, %Y %I:%M %p %Z")
+            return dt.strftime("%b %d, %Y %I:%M %p")
+        except Exception:
+            try:
+                return str(dt)
+            except Exception:
+                return "N/A"
+
+    for t in tasks:
+        desc = getattr(t, "description", None) or str(t)
+        status = getattr(t, "status", None) or "pending"
+        tid = getattr(t, "id", None)
+        created = getattr(t, "created_at", None)
+        due = getattr(t, "due_date", None)
+
+        created_str = friendly(created) or "N/A"
+        due_str = friendly(due)
+
+        parts = [f"- {desc}", f"status: {status}"]
+        if tid is not None:
+            parts.append(f"id: {tid}")
+        parts.append(f"created: {created_str}")
+        if due_str:
+            parts.append(f"due: {due_str}")
+
+        lines.append(" (".join([parts[0], ", ".join(parts[1:])]) + ")")
+
+    lines.append("")
+    lines.append("Tip: reply 'complete <id>' to mark a task as done.")
+    return "\n".join(lines)
+
+
 async def process_telex_message(user_id: str, message: str) -> dict:
-    """Classify message and perform the corresponding action using Groq."""
-    logger.info(f"Processing telex message for user_id={user_id}")
-    # llm helpers are synchronous (blocking). Run them in a thread to avoid
-    # blocking the event loop.
-    intent = await asyncio.to_thread(llm.classify_intent, message)
-    logger.info(f"Intent classified as '{intent}' for user_id={user_id}")
-    if intent == "todo":
-        try:
-            action = await asyncio.to_thread(llm.extract_todo_action, message)
-            task = await crud.create_task(user_id, action)
-            logger.info(f"Task created for user_id={user_id}, task_id={task.id}")
-            return {"status": "ok", "message": f'Added "{task.description}" to your todo list.', "task_id": task.id}
-        except Exception as e:
-            logger.error(f"Failed to create task for user_id={user_id}: {e}")
-            raise HTTPException(status_code=500, detail="Failed to create task")
+    """Plan and execute actions via LLM only (no heuristics).
 
-    if intent == "journal":
-        try:
-            sentiment, summary = await asyncio.to_thread(llm.analyze_entry, message)
-            journal = await crud.create_journal(user_id, message, summary, sentiment)
-            logger.info(f"Journal entry created for user_id={user_id}, journal_id={journal.id}")
-            return {
-                "status": "ok",
-                "message": "Journal saved.",
-                "summary": summary,
-                "sentiment": sentiment,
-                "journal_id": journal.id,
-            }
-        except Exception as e:
-            logger.error(f"Failed to create journal entry for user_id={user_id}: {e}")
-            raise HTTPException(status_code=500, detail="Failed to create journal entry")
+    Supports multiple actions in one message.
+    """
+    logger.info("Processing telex message for user_id=%s", user_id)
+    text = (message or "").strip()
 
-    logger.warning(f"Could not determine intent for user_id={user_id}")
-    raise HTTPException(status_code=400, detail="Could not determine intent (todo or journal).")
+    # Ask the LLM to plan actions
+    plan = await asyncio.to_thread(llm.plan_actions, text)
+    actions = plan.get("actions", []) if isinstance(plan, dict) else []
+
+    # Fallback to legacy single-intent path if no actions are returned
+    if not actions:
+        intent = await asyncio.to_thread(llm.classify_intent, text)
+        logger.info("Fallback intent classified as '%s' for user_id=%s", intent, user_id)
+        if intent == "todo":
+            try:
+                action = await asyncio.to_thread(llm.extract_todo_action, text)
+                task = await crud.create_task(user_id, action)
+                return {"status": "ok", "message": f'Added "{task.description}" to your todo list.', "task_id": task.id}
+            except Exception:
+                raise HTTPException(status_code=500, detail="Failed to create task")
+        if intent == "journal":
+            try:
+                sentiment, summary = await asyncio.to_thread(llm.analyze_entry, text)
+                journal = await crud.create_journal(user_id, text, summary, sentiment)
+                return {"status": "ok", "message": "Journal saved.", "summary": summary, "sentiment": sentiment, "journal_id": journal.id}
+            except Exception:
+                raise HTTPException(status_code=500, detail="Failed to create journal entry")
+        raise HTTPException(status_code=400, detail="Could not determine intent (todo or journal).")
+
+    # Execute actions sequentially and collect a conversational summary
+    responses: List[str] = []
+    metadata: Dict[str, Any] = {"executed": []}
+
+    from datetime import datetime
+
+    def parse_dt(maybe: Any):
+        if not maybe:
+            return None
+        if isinstance(maybe, datetime):
+            return maybe
+        if isinstance(maybe, (int, float)):
+            try:
+                return datetime.fromtimestamp(maybe)
+            except Exception:
+                return None
+        if isinstance(maybe, str):
+            for fmt in ("%Y-%m-%d", "%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%SZ"):
+                try:
+                    return datetime.strptime(maybe, fmt)
+                except Exception:
+                    continue
+        return None
+
+    for a in actions:
+        a_type = a.get("type")
+        params = a.get("params", {}) if isinstance(a, dict) else {}
+        try:
+            if a_type == "create_task":
+                desc = (params.get("description") or text).strip()
+                due = parse_dt(params.get("due_date"))
+                task = await crud.create_task(user_id, desc, due_date=due)
+                responses.append(f"Added \"{task.description}\" to your todo list (id: {task.id}).")
+                metadata["executed"].append({"type": a_type, "task_id": task.id})
+
+            elif a_type == "list_tasks":
+                tasks = await crud.get_tasks(user_id)
+                responses.append(_format_tasks_list(tasks))
+                metadata["executed"].append({"type": a_type, "total": len(tasks)})
+
+            elif a_type == "update_task":
+                tid = params.get("id")
+                if not tid:
+                    raise HTTPException(status_code=400, detail="Task id is required for update")
+                task = await crud.update_task(
+                    int(tid),
+                    description=params.get("description"),
+                    status=params.get("status"),
+                    due_date=parse_dt(params.get("due_date")),
+                )
+                if not task:
+                    raise HTTPException(status_code=404, detail="Task not found")
+                responses.append(f"Updated task #{task.id}.")
+                metadata["executed"].append({"type": a_type, "task_id": task.id})
+
+            elif a_type == "delete_task":
+                tid = params.get("id")
+                if not tid:
+                    raise HTTPException(status_code=400, detail="Task id is required for delete")
+                ok = await crud.delete_task(int(tid))
+                if not ok:
+                    raise HTTPException(status_code=404, detail="Task not found")
+                responses.append(f"Deleted task #{int(tid)}.")
+                metadata["executed"].append({"type": a_type, "task_id": int(tid)})
+
+            elif a_type == "create_journal":
+                entry = (params.get("entry") or text).strip()
+                # Optionally analyze to populate summary/sentiment for better UX
+                try:
+                    sentiment, summary = await asyncio.to_thread(llm.analyze_entry, entry)
+                except Exception:
+                    sentiment, summary = None, None
+                j = await crud.create_journal(user_id, entry, summary, sentiment)
+                responses.append(f"Journal saved (id: {j.id}).")
+                metadata["executed"].append({"type": a_type, "journal_id": j.id})
+
+            elif a_type == "list_journals":
+                limit = params.get("limit") or 20
+                js = await crud.get_journals(user_id, int(limit))
+                if not js:
+                    responses.append("No journal entries yet.")
+                else:
+                    lines = [f"Your latest {min(len(js), int(limit))} journal entries:", ""]
+                    for j in js:
+                        lines.append(f"- id {j.id}: {j.summary or (j.entry[:60] + ('…' if len(j.entry) > 60 else ''))}")
+                    responses.append("\n".join(lines))
+                metadata["executed"].append({"type": a_type, "total": len(js)})
+
+            elif a_type == "update_journal":
+                jid = params.get("id")
+                if not jid:
+                    raise HTTPException(status_code=400, detail="Journal id is required for update")
+                j = await crud.update_journal(
+                    int(jid),
+                    entry=params.get("entry"),
+                    summary=params.get("summary"),
+                    sentiment=params.get("sentiment"),
+                )
+                if not j:
+                    raise HTTPException(status_code=404, detail="Journal not found")
+                responses.append(f"Updated journal #{j.id}.")
+                metadata["executed"].append({"type": a_type, "journal_id": j.id})
+
+            elif a_type == "delete_journal":
+                jid = params.get("id")
+                if not jid:
+                    raise HTTPException(status_code=400, detail="Journal id is required for delete")
+                ok = await crud.delete_journal(int(jid))
+                if not ok:
+                    raise HTTPException(status_code=404, detail="Journal not found")
+                responses.append(f"Deleted journal #{int(jid)}.")
+                metadata["executed"].append({"type": a_type, "journal_id": int(jid)})
+
+            else:
+                # Unknown action type — ignore but note
+                metadata["executed"].append({"type": a_type, "skipped": True})
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.exception("Action %s failed: %s", a_type, e)
+            raise HTTPException(status_code=500, detail=f"Failed to execute action: {a_type}")
+
+    reply = "\n\n".join([r for r in responses if r]) if responses else "Done."
+    return {"status": "ok", "message": reply, **metadata}
 
 
 async def list_tasks(user_id: str):

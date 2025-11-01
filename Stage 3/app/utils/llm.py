@@ -1,6 +1,6 @@
 
 import logging
-from typing import Tuple, Dict, Any
+from typing import Tuple, Dict, Any, List
 import os
 import json
 
@@ -130,3 +130,67 @@ def analyze_entry(text: str) -> Tuple[str, str]:
     if sentiment not in {"positive", "neutral", "negative"}:
         raise RuntimeError("Groq returned invalid sentiment")
     return sentiment, summary
+
+
+def plan_actions(message: str) -> Dict[str, Any]:
+    """Return a structured plan of actions for the assistant to execute.
+
+    The model must return strict JSON with this shape:
+    {
+      "actions": [
+        {
+          "type": "create_task" | "list_tasks" | "update_task" | "delete_task" |
+                   "create_journal" | "list_journals" | "update_journal" | "delete_journal",
+          "params": { ... }
+        }, ...
+      ]
+    }
+
+    Allowed params per type:
+    - create_task: {"description": str, "due_date": str|null}
+    - list_tasks: {"user_id": str|null}
+    - update_task: {"id": int, "description": str|null, "status": "pending|completed"|null, "due_date": str|null}
+    - delete_task: {"id": int}
+    - create_journal: {"entry": str}
+    - list_journals: {"user_id": str|null, "limit": int|null}
+    - update_journal: {"id": int, "entry": str|null, "summary": str|null, "sentiment": "positive|neutral|negative"|null}
+    - delete_journal: {"id": int}
+    """
+    logger.info("Planning actions via Groq for message: %s", message)
+    system = (
+        "You are a controller for a todo+journal assistant. Parse the user's message and output a STRICT JSON object "
+        "with an 'actions' array describing the operations to perform. Support multiple actions in order. "
+        "Only output JSON, no extra text. Use the provided schema and be conservative with IDs if not specified."
+    )
+    user = f"Message: {message}\n\nReturn only JSON with an 'actions' array per the schema."
+
+    content = _groq_chat([
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ], response_json=True, temperature=0.1, max_tokens=400)
+
+    try:
+        data = json.loads(content)
+    except Exception as e:
+        logger.error("Groq returned invalid JSON for plan_actions: %s", e)
+        raise
+
+    # Normalize minimal structure
+    actions = data.get("actions")
+    if not isinstance(actions, list):
+        logger.warning("plan_actions: missing or invalid 'actions'; returning empty plan")
+        return {"actions": []}
+    # Basic sanitization
+    cleaned: List[Dict[str, Any]] = []
+    for a in actions:
+        if not isinstance(a, dict):
+            continue
+        t = str(a.get("type", "")).strip()
+        p = a.get("params") or {}
+        allowed = {
+            "create_task", "list_tasks", "update_task", "delete_task",
+            "create_journal", "list_journals", "update_journal", "delete_journal",
+        }
+        if t in allowed and isinstance(p, dict):
+            cleaned.append({"type": t, "params": p})
+    return {"actions": cleaned}

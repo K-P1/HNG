@@ -130,63 +130,13 @@ async def reflective_assistant(request: Request):
         }
 
         async def process_followup():
-            # import here to avoid circular imports at module import time
+            # Execute the user's message via the LLM-driven planner and push the summary
             try:
-                from app import crud
-                from datetime import datetime
-
-                tasks = []
-                try:
-                    tasks = await crud.get_tasks(user_id)
-                except Exception:
-                    tasks = []
-
-                if not tasks:
-                    msg = "You currently have no pending tasks. 🎉"
+                result = await services.process_telex_message(user_id, user_message)
+                if isinstance(result, dict):
+                    msg = result.get("message") or "Done."
                 else:
-                    total = len(tasks)
-                    pending_count = sum(1 for t in tasks if getattr(t, "status", "pending") != "completed")
-                    header = f"Here are your tasks (total: {total}, pending: {pending_count}):"
-                    lines = [header, ""]
-
-                    for t in tasks:
-                        desc = getattr(t, "description", None) or str(t)
-                        status = getattr(t, "status", None) or "pending"
-                        tid = getattr(t, "id", None)
-                        created = getattr(t, "created_at", None)
-                        due = getattr(t, "due_date", None)
-
-                        # Friendly human-readable date formatting
-                        def friendly(dt):
-                            if not dt:
-                                return None
-                            try:
-                                # Prefer a timezone-aware friendly format
-                                if hasattr(dt, "tzinfo") and dt.tzinfo is not None:
-                                    return dt.strftime("%b %d, %Y %I:%M %p %Z")
-                                return dt.strftime("%b %d, %Y %I:%M %p")
-                            except Exception:
-                                try:
-                                    return str(dt)
-                                except Exception:
-                                    return "N/A"
-
-                        created_str = friendly(created) or "N/A"
-                        due_str = friendly(due)
-
-                        parts = [f"- {desc}", f"status: {status}"]
-                        if tid is not None:
-                            parts.append(f"id: {tid}")
-                        parts.append(f"created: {created_str}")
-                        if due_str:
-                            parts.append(f"due: {due_str}")
-
-                        lines.append(" (".join([parts[0], ", ".join(parts[1:])]) + ")")
-
-                    lines.append("")
-                    lines.append("Tip: reply 'complete <id>' to mark a task as done.")
-                    msg = "\n".join(lines)
-
+                    msg = str(result)
                 await send_telex_followup(push_url, msg)
             except Exception as e:
                 logger.exception("Error in background follow-up task: %s", e)

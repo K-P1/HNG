@@ -1,6 +1,7 @@
 
 import logging
 from typing import Optional, List
+from datetime import datetime
 import logging
 from typing import Optional, List
 from app.database import AsyncSessionLocal
@@ -10,10 +11,12 @@ from sqlalchemy import select
 logger = logging.getLogger("crud")
 
 
-async def create_task(user_id: str, description: str) -> Task:
+async def create_task(user_id: str, description: str, due_date: Optional[datetime] = None) -> Task:
     async with AsyncSessionLocal() as db:
         try:
             task = Task(user_id=user_id, description=description)
+            if due_date is not None:
+                task.due_date = due_date
             db.add(task)
             await db.commit()
             await db.refresh(task)
@@ -53,6 +56,44 @@ async def complete_task(task_id: int) -> Optional[Task]:
             raise
 
 
+async def update_task(task_id: int, *, description: Optional[str] = None, status: Optional[str] = None, due_date: Optional[datetime] = None) -> Optional[Task]:
+    async with AsyncSessionLocal() as db:
+        try:
+            task = await db.get(Task, task_id)
+            if not task:
+                logger.warning("Task with id=%s not found for update.", task_id)
+                return None
+            if description is not None:
+                task.description = description
+            if status is not None:
+                task.status = status
+            if due_date is not None:
+                task.due_date = due_date
+            await db.commit()
+            await db.refresh(task)
+            logger.info("Task id=%s updated.", task_id)
+            return task
+        except Exception as e:
+            logger.error("Failed to update task id=%s: %s", task_id, e)
+            raise
+
+
+async def delete_task(task_id: int) -> bool:
+    async with AsyncSessionLocal() as db:
+        try:
+            task = await db.get(Task, task_id)
+            if not task:
+                logger.warning("Task with id=%s not found for delete.", task_id)
+                return False
+            await db.delete(task)
+            await db.commit()
+            logger.info("Task id=%s deleted.", task_id)
+            return True
+        except Exception as e:
+            logger.error("Failed to delete task id=%s: %s", task_id, e)
+            raise
+
+
 async def create_journal(user_id: str, entry: str, summary: Optional[str] = None, sentiment: Optional[str] = None) -> Journal:
     async with AsyncSessionLocal() as db:
         try:
@@ -64,6 +105,44 @@ async def create_journal(user_id: str, entry: str, summary: Optional[str] = None
             return j
         except Exception as e:
             logger.error(f"Failed to create journal entry for user_id={user_id}: {e}")
+            raise
+
+
+async def update_journal(journal_id: int, *, entry: Optional[str] = None, summary: Optional[str] = None, sentiment: Optional[str] = None) -> Optional[Journal]:
+    async with AsyncSessionLocal() as db:
+        try:
+            j = await db.get(Journal, journal_id)
+            if not j:
+                logger.warning("Journal with id=%s not found for update.", journal_id)
+                return None
+            if entry is not None:
+                j.entry = entry
+            if summary is not None:
+                j.summary = summary
+            if sentiment is not None:
+                j.sentiment = sentiment
+            await db.commit()
+            await db.refresh(j)
+            logger.info("Journal id=%s updated.", journal_id)
+            return j
+        except Exception as e:
+            logger.error("Failed to update journal id=%s: %s", journal_id, e)
+            raise
+
+
+async def delete_journal(journal_id: int) -> bool:
+    async with AsyncSessionLocal() as db:
+        try:
+            j = await db.get(Journal, journal_id)
+            if not j:
+                logger.warning("Journal with id=%s not found for delete.", journal_id)
+                return False
+            await db.delete(j)
+            await db.commit()
+            logger.info("Journal id=%s deleted.", journal_id)
+            return True
+        except Exception as e:
+            logger.error("Failed to delete journal id=%s: %s", journal_id, e)
             raise
 
 
