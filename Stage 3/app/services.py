@@ -133,8 +133,16 @@ async def process_telex_message(user_id: str, message: str) -> dict:
 
             elif a_type == "update_task":
                 tid = params.get("id")
+                # Allow description-based targeting when id is omitted
                 if not tid:
-                    raise HTTPException(status_code=400, detail="Task id is required for update")
+                    desc_q = params.get("description") or params.get("query") or params.get("title")
+                    if not desc_q:
+                        raise HTTPException(status_code=400, detail="Task id is required for update")
+                    matches = await crud.find_tasks_by_description(user_id, str(desc_q))
+                    if not matches:
+                        raise HTTPException(status_code=404, detail="Task not found")
+                    # Prefer most recent
+                    tid = matches[0].id
                 task = await crud.update_task(
                     int(tid),
                     description=params.get("description"),
@@ -143,17 +151,29 @@ async def process_telex_message(user_id: str, message: str) -> dict:
                 )
                 if not task:
                     raise HTTPException(status_code=404, detail="Task not found")
-                responses.append(f"Updated task #{task.id}.")
+                note = ""
+                if params.get("id") is None and params.get("description"):
+                    note = f" (matched by description: '{params.get('description')}')"
+                responses.append(f"Updated task #{task.id}.{note}")
                 metadata["executed"].append({"type": a_type, "task_id": task.id})
 
             elif a_type == "delete_task":
                 tid = params.get("id")
                 if not tid:
-                    raise HTTPException(status_code=400, detail="Task id is required for delete")
+                    desc_q = params.get("description") or params.get("query") or params.get("title")
+                    if not desc_q:
+                        raise HTTPException(status_code=400, detail="Task id is required for delete")
+                    matches = await crud.find_tasks_by_description(user_id, str(desc_q))
+                    if not matches:
+                        raise HTTPException(status_code=404, detail="Task not found")
+                    tid = matches[0].id
                 ok = await crud.delete_task(int(tid))
                 if not ok:
                     raise HTTPException(status_code=404, detail="Task not found")
-                responses.append(f"Deleted task #{int(tid)}.")
+                note = ""
+                if params.get("id") is None and params.get("description"):
+                    note = f" (matched by description: '{params.get('description')}')"
+                responses.append(f"Deleted task #{int(tid)}.{note}")
                 metadata["executed"].append({"type": a_type, "task_id": int(tid)})
 
             elif a_type == "create_journal":
@@ -182,7 +202,13 @@ async def process_telex_message(user_id: str, message: str) -> dict:
             elif a_type == "update_journal":
                 jid = params.get("id")
                 if not jid:
-                    raise HTTPException(status_code=400, detail="Journal id is required for update")
+                    entry_q = params.get("entry") or params.get("query") or params.get("summary")
+                    if not entry_q:
+                        raise HTTPException(status_code=400, detail="Journal id is required for update")
+                    matches = await crud.find_journals_by_entry(user_id, str(entry_q))
+                    if not matches:
+                        raise HTTPException(status_code=404, detail="Journal not found")
+                    jid = matches[0].id
                 j = await crud.update_journal(
                     int(jid),
                     entry=params.get("entry"),
@@ -191,17 +217,29 @@ async def process_telex_message(user_id: str, message: str) -> dict:
                 )
                 if not j:
                     raise HTTPException(status_code=404, detail="Journal not found")
-                responses.append(f"Updated journal #{j.id}.")
+                note = ""
+                if params.get("id") is None and (params.get("entry") or params.get("summary")):
+                    note = " (matched by text)"
+                responses.append(f"Updated journal #{j.id}.{note}")
                 metadata["executed"].append({"type": a_type, "journal_id": j.id})
 
             elif a_type == "delete_journal":
                 jid = params.get("id")
                 if not jid:
-                    raise HTTPException(status_code=400, detail="Journal id is required for delete")
+                    entry_q = params.get("entry") or params.get("query") or params.get("summary")
+                    if not entry_q:
+                        raise HTTPException(status_code=400, detail="Journal id is required for delete")
+                    matches = await crud.find_journals_by_entry(user_id, str(entry_q))
+                    if not matches:
+                        raise HTTPException(status_code=404, detail="Journal not found")
+                    jid = matches[0].id
                 ok = await crud.delete_journal(int(jid))
                 if not ok:
                     raise HTTPException(status_code=404, detail="Journal not found")
-                responses.append(f"Deleted journal #{int(jid)}.")
+                note = ""
+                if params.get("id") is None and (params.get("entry") or params.get("summary")):
+                    note = " (matched by text)"
+                responses.append(f"Deleted journal #{int(jid)}.{note}")
                 metadata["executed"].append({"type": a_type, "journal_id": int(jid)})
 
             else:

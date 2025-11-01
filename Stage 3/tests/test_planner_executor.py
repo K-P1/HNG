@@ -56,6 +56,27 @@ def test_planner_update_and_delete_task(monkeypatch):
     assert f"Deleted task #{t.id}" in result["message"]
 
 
+def test_planner_update_delete_task_by_description(monkeypatch):
+    asyncio.run(database.init_db_async())
+    # seed tasks
+    t1 = asyncio.run(crud.create_task("u_desc", "Finish stage 3"))
+    asyncio.run(crud.create_task("u_desc", "Some other task"))
+
+    def fake_plan_actions(message: str):
+        return {
+            "actions": [
+                {"type": "update_task", "params": {"description": "Finish stage 3", "status": "completed"}},
+                {"type": "delete_task", "params": {"description": "Finish stage 3"}},
+            ]
+        }
+
+    monkeypatch.setattr(services.llm, "plan_actions", fake_plan_actions)
+    res = asyncio.run(services.process_telex_message("u_desc", "complete and remove by name"))
+    assert res["status"] == "ok"
+    assert "Updated task #" in res["message"]
+    assert "Deleted task #" in res["message"]
+
+
 def test_planner_journal_flow(monkeypatch):
     asyncio.run(database.init_db_async())
 
@@ -79,3 +100,24 @@ def test_planner_journal_flow(monkeypatch):
     assert result["status"] == "ok"
     assert "Journal saved" in result["message"] or "Journal saved" in result["message"].lower()
     assert "Your latest" in result["message"] or "No journal entries" in result["message"]
+
+
+def test_planner_update_delete_journal_by_text(monkeypatch):
+    asyncio.run(database.init_db_async())
+
+    # create a journal to target by text
+    j = asyncio.run(crud.create_journal("u_j2", "Finish stage 3 reflections", "Summary", "neutral"))
+
+    def fake_plan_actions(message: str):
+        return {
+            "actions": [
+                {"type": "update_journal", "params": {"entry": "Finish stage 3", "summary": "Updated"}},
+                {"type": "delete_journal", "params": {"entry": "Finish stage 3"}},
+            ]
+        }
+
+    monkeypatch.setattr(services.llm, "plan_actions", fake_plan_actions)
+    res = asyncio.run(services.process_telex_message("u_j2", "update journal and delete by text"))
+    assert res["status"] == "ok"
+    assert "Updated journal #" in res["message"]
+    assert "Deleted journal #" in res["message"]

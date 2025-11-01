@@ -6,7 +6,7 @@ import logging
 from typing import Optional, List
 from app.database import AsyncSessionLocal
 from app.models.models import Task, Journal
-from sqlalchemy import select
+from sqlalchemy import select, func, desc
 
 logger = logging.getLogger("crud")
 
@@ -36,6 +36,26 @@ async def get_tasks(user_id: str) -> List[Task]:
             return tasks
         except Exception as e:
             logger.error(f"Failed to fetch tasks for user_id={user_id}: {e}")
+            raise
+
+
+async def find_tasks_by_description(user_id: str, query: str) -> List[Task]:
+    """Find tasks where description contains the query (case-insensitive), most recent first."""
+    async with AsyncSessionLocal() as db:
+        try:
+            q = (query or "").strip().lower()
+            if not q:
+                return []
+            stmt = (
+                select(Task)
+                .where(Task.user_id == user_id)
+                .where(func.lower(Task.description).like(f"%{q}%"))
+                .order_by(desc(Task.created_at))
+            )
+            result = await db.execute(stmt)
+            return list(result.scalars())
+        except Exception as e:
+            logger.error("Failed to search tasks for user_id=%s: %s", user_id, e)
             raise
 
 
@@ -160,4 +180,24 @@ async def get_journals(user_id: str, limit: int = 20) -> List[Journal]:
             return journals
         except Exception as e:
             logger.error(f"Failed to fetch journals for user_id={user_id}: {e}")
+            raise
+
+
+async def find_journals_by_entry(user_id: str, query: str) -> List[Journal]:
+    """Find journals where entry contains the query (case-insensitive), most recent first."""
+    async with AsyncSessionLocal() as db:
+        try:
+            q = (query or "").strip().lower()
+            if not q:
+                return []
+            stmt = (
+                select(Journal)
+                .where(Journal.user_id == user_id)
+                .where(func.lower(Journal.entry).like(f"%{q}%"))
+                .order_by(desc(Journal.created_at))
+            )
+            result = await db.execute(stmt)
+            return list(result.scalars())
+        except Exception as e:
+            logger.error("Failed to search journals for user_id=%s: %s", user_id, e)
             raise

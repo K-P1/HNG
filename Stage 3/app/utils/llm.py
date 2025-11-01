@@ -146,20 +146,21 @@ def plan_actions(message: str) -> Dict[str, Any]:
       ]
     }
 
-    Allowed params per type:
+    Allowed params per type (selectors can be by id OR by text when id is unknown):
     - create_task: {"description": str, "due_date": str|null}
     - list_tasks: {"user_id": str|null}
-    - update_task: {"id": int, "description": str|null, "status": "pending|completed"|null, "due_date": str|null}
-    - delete_task: {"id": int}
+    - update_task: {"id": int|null, "description": str|null, "status": "pending|completed"|null, "due_date": str|null, "query": str|null, "title": str|null}
+    - delete_task: {"id": int|null, "description": str|null, "query": str|null, "title": str|null}
     - create_journal: {"entry": str}
     - list_journals: {"user_id": str|null, "limit": int|null}
-    - update_journal: {"id": int, "entry": str|null, "summary": str|null, "sentiment": "positive|neutral|negative"|null}
-    - delete_journal: {"id": int}
+    - update_journal: {"id": int|null, "entry": str|null, "summary": str|null, "sentiment": "positive|neutral|negative"|null, "query": str|null}
+    - delete_journal: {"id": int|null, "entry": str|null, "summary": str|null, "query": str|null}
     """
     logger.info("Planning actions via Groq for message: %s", message)
     system = (
         "You are a controller for a todo+journal assistant. Parse the user's message and output a STRICT JSON object "
         "with an 'actions' array describing the operations to perform. Support multiple actions in order. "
+        "When the user does not provide an id for update/delete, include a text selector (e.g., description/query/title/entry) so the backend can resolve the item. "
         "Only output JSON, no extra text. Use the provided schema and be conservative with IDs if not specified."
     )
     user = f"Message: {message}\n\nReturn only JSON with an 'actions' array per the schema."
