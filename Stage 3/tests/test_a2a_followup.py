@@ -28,9 +28,14 @@ def test_a2a_followup_posts_task_list(monkeypatch):
 
     client = TestClient(app)
 
+    # Avoid external LLM calls in background follow-up
+    def fake_plan_actions(message: str):
+        return {"actions": [{"type": "list_tasks", "params": {}}]}
+    monkeypatch.setattr(services.llm, "plan_actions", fake_plan_actions)
+
     recorded = []
 
-    async def fake_send_telex(push_url, message):
+    async def fake_send_telex(push_url, message, *args, **kwargs):
         # record the call for assertions
         recorded.append((push_url, message))
 

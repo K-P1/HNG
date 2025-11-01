@@ -140,12 +140,12 @@ async def reflective_assistant(request: Request):
                     msg = result.get("message") or "Done."
                 else:
                     msg = str(result)
-                await send_telex_followup(push_url, msg, push_config)
+                await send_telex_followup(str(push_url), msg, push_config, request_id)
             except Exception as e:
                 logger.exception("Error in background follow-up task: %s", e)
                 # Push the error back so the user is informed quickly
                 try:
-                    await send_telex_followup(push_url, f"Error: {e}", push_config)
+                    await send_telex_followup(str(push_url), f"Error: {e}", push_config, request_id)
                 except Exception:
                     pass
 

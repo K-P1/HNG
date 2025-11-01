@@ -237,6 +237,14 @@ def plan_actions(message: str) -> Dict[str, Any]:
             # Copy non-control keys as params
             p = {k: v for k, v in a.items() if k not in {"action", "type", "params"}}
 
+        # Merge optional selector object into params for id-less targeting
+        sel = a.get("selector")
+        if isinstance(sel, dict):
+            for k, v in sel.items():
+                # Do not overwrite explicit params
+                if k not in p:
+                    p[k] = v
+
         # Normalize common (verb,subject) pairs to our operation types
         op_from_pair = None
         if verb and subject:
@@ -275,6 +283,9 @@ def plan_actions(message: str) -> Dict[str, Any]:
             if "description" not in p and isinstance(p.get("title"), str):
                 p["description"] = p.get("title")
             # Combine due_date and due_time into a single due_date string the executor can parse
+            # Accept 'due' or ('due_date' + 'due_time')
+            if isinstance(p.get("due"), str) and not isinstance(p.get("due_date"), str):
+                p["due_date"] = p.get("due")
             dd_val = p.get("due_date")
             dt_val = p.get("due_time")
             if isinstance(dd_val, str) and isinstance(dt_val, str):

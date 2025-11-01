@@ -5,7 +5,7 @@ from typing import Optional, Dict, Any
 logger = logging.getLogger("telex_push")
 
 
-async def send_telex_followup(push_url: str, message: str, push_config: Optional[Dict[str, Any]] = None):
+async def send_telex_followup(push_url: str, message: str, push_config: Optional[Dict[str, Any]] = None, request_id: Optional[str] = None):
     """Send a follow-up message to Telex after the initial response.
 
     If push_config contains authentication details, include Authorization header.
@@ -22,7 +22,7 @@ async def send_telex_followup(push_url: str, message: str, push_config: Optional
 
     payload = {
         "jsonrpc": "2.0",
-        "id": "followup",
+        "id": request_id or "followup",
         "result": {
             "messages": [
                 {"role": "assistant", "content": message}

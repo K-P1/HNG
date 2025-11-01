@@ -126,8 +126,10 @@ async def process_telex_message(user_id: str, message: str) -> dict:
                     matches = await crud.find_tasks_by_description(user_id, str(desc_q))
                     if not matches:
                         raise HTTPException(status_code=404, detail="Task not found")
-                    # Prefer most recent
-                    tid = matches[0].id
+                    # Prefer exact (case-insensitive) description match; otherwise most recent
+                    desc_q_str = str(desc_q).strip().lower()
+                    exact = next((m for m in matches if (getattr(m, "description", "") or "").strip().lower() == desc_q_str), None)
+                    tid = (exact.id if exact else matches[0].id)
                 task = await crud.update_task(
                     int(tid),
                     description=params.get("description"),
@@ -151,7 +153,9 @@ async def process_telex_message(user_id: str, message: str) -> dict:
                     matches = await crud.find_tasks_by_description(user_id, str(desc_q))
                     if not matches:
                         raise HTTPException(status_code=404, detail="Task not found")
-                    tid = matches[0].id
+                    desc_q_str = str(desc_q).strip().lower()
+                    exact = next((m for m in matches if (getattr(m, "description", "") or "").strip().lower() == desc_q_str), None)
+                    tid = (exact.id if exact else matches[0].id)
                 ok = await crud.delete_task(int(tid))
                 if not ok:
                     raise HTTPException(status_code=404, detail="Task not found")
@@ -193,7 +197,9 @@ async def process_telex_message(user_id: str, message: str) -> dict:
                     matches = await crud.find_journals_by_entry(user_id, str(entry_q))
                     if not matches:
                         raise HTTPException(status_code=404, detail="Journal not found")
-                    jid = matches[0].id
+                    entry_q_str = str(entry_q).strip().lower()
+                    exact = next((m for m in matches if (getattr(m, "entry", "") or "").strip().lower() == entry_q_str or (getattr(m, "summary", "") or "").strip().lower() == entry_q_str), None)
+                    jid = (exact.id if exact else matches[0].id)
                 j = await crud.update_journal(
                     int(jid),
                     entry=params.get("entry"),
@@ -217,7 +223,9 @@ async def process_telex_message(user_id: str, message: str) -> dict:
                     matches = await crud.find_journals_by_entry(user_id, str(entry_q))
                     if not matches:
                         raise HTTPException(status_code=404, detail="Journal not found")
-                    jid = matches[0].id
+                    entry_q_str = str(entry_q).strip().lower()
+                    exact = next((m for m in matches if (getattr(m, "entry", "") or "").strip().lower() == entry_q_str or (getattr(m, "summary", "") or "").strip().lower() == entry_q_str), None)
+                    jid = (exact.id if exact else matches[0].id)
                 ok = await crud.delete_journal(int(jid))
                 if not ok:
                     raise HTTPException(status_code=404, detail="Journal not found")
