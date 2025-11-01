@@ -222,8 +222,9 @@ def plan_actions(message: str) -> Dict[str, Any]:
         if not isinstance(a, dict):
             continue
         # Some planners use {action: verb, type: subject} pairs instead of our {type: operation}
-        verb = str(a.get("action", "")).lower().strip()
-        subject = str(a.get("type", "")).lower().strip()
+        raw_type = str(a.get("type", "")).lower().strip()
+        verb = str(a.get("action", "") or a.get("verb", "")).lower().strip()
+        subject = str(a.get("subject", "") or a.get("entity", "") or a.get("target", "") or a.get("collection", "")).lower().strip() or raw_type
 
         # Start with raw type, then normalize; will be overridden by (verb,subject) mapping if present
         t = type_map.get(subject or str(a.get("type", "")).strip(), str(a.get("type", "")).strip())
@@ -236,6 +237,21 @@ def plan_actions(message: str) -> Dict[str, Any]:
         if not p:
             # Copy non-control keys as params
             p = {k: v for k, v in a.items() if k not in {"action", "type", "params"}}
+
+        # Some planners nest arguments under an 'item' field. Flatten it into params.
+        item = a.get("item")
+        if isinstance(item, dict):
+            for k, v in item.items():
+                # Do not overwrite explicit params
+                if k not in p:
+                    p[k] = v
+            # Infer subject from item.kind/type if present
+            try:
+                ik = str(item.get("kind") or item.get("type") or "").lower().strip()
+                if ik and ik not in {"create", "list", "update", "delete", "remove", "add", "get", "show"}:
+                    subject = subject or ik
+            except Exception:
+                pass
 
         # Merge optional selector object into params for id-less targeting
         sel = a.get("selector")
@@ -271,11 +287,49 @@ def plan_actions(message: str) -> Dict[str, Any]:
                 if verb in {"list", "show", "get"}:
                     op_from_pair = "list_journals"
 
+        # If 'type' was actually a verb like 'create'/'list', promote it to verb when verb was empty
+        if not verb and raw_type in {"create", "add", "list", "show", "get", "update", "complete", "set", "delete", "remove"}:
+            verb = raw_type
+
+        # Try to infer operation from (verb, subject) or from params when subject is ambiguous
         if op_from_pair:
             t = op_from_pair
         else:
             # Fallback: the 'type' field may already be an operation string
             t = type_map.get(str(a.get("type", "")).strip(), str(a.get("type", "")).strip())
+
+        # If still not in our allowed set, infer from verb + params
+        def infer_domain(params: Dict[str, Any], subj: str) -> str:
+            s = (subj or "").lower().strip()
+            if s in {"journal", "journals", "note", "notes"}:
+                return "journal"
+            # look at params
+            keys = {k.lower() for k in params.keys()}
+            if {"entry", "summary", "sentiment"} & keys:
+                return "journal"
+            return "task"
+
+        allowed = {
+            "create_task", "list_tasks", "update_task", "delete_task",
+            "create_journal", "list_journals", "update_journal", "delete_journal",
+        }
+
+        if t not in allowed and verb:
+            domain = infer_domain(p, subject)
+            if verb in {"create", "add"}:
+                t = "create_journal" if domain == "journal" else "create_task"
+            elif verb in {"list", "show", "get"}:
+                if domain == "journal":
+                    t = "list_journals"
+                else:
+                    t = "list_tasks"
+            elif verb in {"update", "set", "complete"}:
+                t = "update_journal" if domain == "journal" else "update_task"
+                # Map 'complete' to completed status if not provided
+                if verb == "complete" and t == "update_task" and "status" not in p:
+                    p["status"] = "completed"
+            elif verb in {"delete", "remove"}:
+                t = "delete_journal" if domain == "journal" else "delete_task"
 
         # Param normalizations
         if t == "create_task":
@@ -308,10 +362,6 @@ def plan_actions(message: str) -> Dict[str, Any]:
             if isinstance(sent, dict) and "label" in sent:
                 p["sentiment"] = sent.get("label")
 
-        allowed = {
-            "create_task", "list_tasks", "update_task", "delete_task",
-            "create_journal", "list_journals", "update_journal", "delete_journal",
-        }
         if t in allowed and isinstance(p, dict):
             cleaned.append({"type": t, "params": p})
     logger.debug("plan_actions cleaned actions count: %d", len(cleaned))

@@ -245,7 +245,13 @@ async def process_telex_message(user_id: str, message: str) -> dict:
             logger.exception("Action %s failed: %s", a_type, e)
             raise HTTPException(status_code=500, detail=f"Failed to execute action: {a_type}")
 
-    reply = "\n\n".join([r for r in responses if r]) if responses else "Done."
+    if not responses:
+        reply = "Done."
+    elif len(responses) == 1:
+        reply = responses[0]
+    else:
+        # Add a short header when multiple actions were executed, then include each section as-is
+        reply = "Summary of actions:\n\n" + "\n\n".join([r for r in responses if r])
     return {"status": "ok", "message": reply, **metadata}
 
 
