@@ -20,34 +20,73 @@ async def send_telex_followup(push_url: str, message: str, push_config: Optional
         logger.warning("No push URL provided; cannot send follow-up.")
         return
 
-    payload = {
-        "jsonrpc": "2.0",
-        "id": request_id or "followup",
-        "result": {
-            "messages": [
-                {"role": "assistant", "content": message}
-            ]
-        }
-    }
-
-    # Build headers (Authorization if provided)
+    # Build headers (Authorization and/or X-TELEX-API-KEY if provided)
     headers = {"Content-Type": "application/json"}
     scheme = "Bearer"
     token = None
-    if push_config and isinstance(push_config, dict):
-        token = push_config.get("token")
-        auth = push_config.get("authentication")
-        if isinstance(auth, dict):
-            schemes = auth.get("schemes")
-            if isinstance(schemes, list) and schemes:
-                scheme = schemes[0] or scheme
+    try:
+        if push_config and isinstance(push_config, dict):
+            token = push_config.get("token")
+            auth = push_config.get("authentication")
+            if isinstance(auth, dict):
+                schemes = auth.get("schemes")
+                if isinstance(schemes, list) and schemes:
+                    scheme = schemes[0] or scheme
+    except Exception:
+        token = None
+
+    # Prefer Telex API key header if a token is provided
     if token:
-        headers["Authorization"] = f"{scheme} {token}"
+        headers["X-TELEX-API-KEY"] = str(token)
+        if scheme:
+            headers["Authorization"] = f"{scheme} {token}"
+
+    is_telex_webhook = "/a2a/webhooks/" in (push_url or "")
+    if is_telex_webhook:
+        payload = {
+            "message": {
+                "kind": "message",
+                "role": "agent",
+                "parts": [
+                    {"kind": "text", "text": str(message)}
+                ],
+                # Attach request id as metadata if available (useful for correlation on Telex)
+                "metadata": ({"requestId": request_id} if request_id else None),
+            },
+            # block until Telex dispatches to client(s); safe default
+            "blocking": True,
+        }
+        # Remove None metadata to keep payload clean
+        if payload["message"]["metadata"] is None:
+            payload["message"].pop("metadata", None)
+    else:
+        payload = {
+            "jsonrpc": "2.0",
+            "id": request_id or "followup",
+            "result": {
+                "messages": [
+                    {"role": "assistant", "content": str(message)}
+                ]
+            }
+        }
 
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.post(push_url, json=payload, headers=headers)
-            resp.raise_for_status()
+            try:
+                resp.raise_for_status()
+            except httpx.HTTPStatusError as he:
+                # Include body in logs to help diagnose 4xx payload issues
+                body = None
+                try:
+                    body = resp.json()
+                except Exception:
+                    try:
+                        body = resp.text
+                    except Exception:
+                        body = "<unavailable>"
+                logger.error("Telex follow-up failed: %s | response=%s", he, body)
+                raise
             logger.info(f"Follow-up sent to Telex: {resp.status_code}")
     except Exception as e:
         logger.error(f"Failed to send follow-up to Telex: {e}")
