@@ -1,4 +1,5 @@
 import httpx
+import uuid
 import logging
 from typing import Optional, Dict, Any
 
@@ -51,26 +52,20 @@ async def send_telex_followup(
         # Telex expects a JSON-RPC 2.0 payload with method "message/send"
         payload = {
             "jsonrpc": "2.0",
-            "id": request_id or "followup-1",
+            "id": request_id or str(uuid.uuid4()),
             "method": "message/send",
             "params": {
                 "message": {
-                    "kind": "message",
-                    "role": "assistant",
+                    # Required by Telex: unique message id
+                    "messageId": str(uuid.uuid4()),
+                    # Role must be one of "user" | "agent"
+                    "role": "agent",
                     "parts": [
                         {"kind": "text", "text": str(message)}
                     ],
-                    # Attach request id as metadata if available (useful for correlation on Telex)
-                    "metadata": ({"requestId": request_id} if request_id else None),
-                },
-                # Optional; keep explicit for clarity
-                "metadata": None,
+                }
             },
         }
-        # Remove None metadata under message to keep payload clean
-        msg_meta = payload["params"]["message"].get("metadata")
-        if msg_meta is None:
-            payload["params"]["message"].pop("metadata", None)
     else:
         payload = {
             "jsonrpc": "2.0",
