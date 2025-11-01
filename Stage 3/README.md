@@ -44,6 +44,14 @@ uv.lock             # uv lockfile
     - powershell
     - iwr https://astral.sh/uv/install.ps1 | iex
 
+If you plan to connect to MySQL asynchronously (recommended with the async SQLAlchemy setup in this repo) install `aiomysql` in your environment. For SQLite async support we use `aiosqlite`.
+
+Example (within the project virtualenv):
+
+```powershell
+& .venv\Scripts\pip.exe install aiomysql aiosqlite
+```
+
 ## Setup with uv
 
 1. Create your `.env` from the example
@@ -68,6 +76,8 @@ This will create `.venv` and install all dependencies from `pyproject.toml` / `u
 
 3. Initialize/upgrade the database schema (Alembic)
 
+This project uses an async SQLAlchemy engine. The included `alembic/env.py` supports async engines (it will convert common sync drivers to their async equivalents when possible, e.g. `+pymysql` → `+aiomysql`, `sqlite://` → `sqlite+aiosqlite://`). Make sure the matching async DB driver is installed in the environment where you run Alembic.
+
 ```powershell
 # Uses DATABASE_URL from .env
 uv run alembic upgrade head
@@ -83,9 +93,13 @@ Health check: http://127.0.0.1:8000/health
 
 Interactive docs: http://127.0.0.1:8000/docs
 
-## Configuration (.env)
+- `DATABASE_URL` – default `sqlite:///./app.db`; when using the async setup set an async driver in the URL.
+  Examples:
 
-- `DATABASE_URL` – default `sqlite:///./app.db`; Postgres: `postgresql+psycopg2://user:pass@host:5432/dbname`
+  - Async MySQL: `mysql+aiomysql://user:pass@host:3306/dbname`
+  - Async SQLite (local file): `sqlite+aiosqlite:///./dev.db`
+  - Postgres (sync): `postgresql+psycopg2://user:pass@host:5432/dbname` (you can also use an async Postgres driver such as `asyncpg` via `postgresql+asyncpg://...` if you migrate drivers)
+
 - `GROQ_API_KEY` – required (no fallbacks)
 - `LLM_PROVIDER` – must be `groq`
 - `GROQ_MODEL` – default `llama-3.3-70b-versatile`

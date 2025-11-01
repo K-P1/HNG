@@ -21,7 +21,12 @@ dependencies = [
     "alembic",
     "mysql-connector-python>=9.5.0",
     "pymysql>=1.1.2",
+    "aiosqlite>=0.21.0",
+    "aiomysql>=0.3.2",
 ]
 
 [tool.setuptools.packages.find]
 include = ["app*"]
+
+[tool.pytest.ini_options]
+asyncio_default_fixture_loop_scope = "function"
