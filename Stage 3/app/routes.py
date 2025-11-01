@@ -110,10 +110,13 @@ async def reflective_assistant(request: Request):
     user_id = params.get("user_id") or (message_obj.get("user_id") if isinstance(message_obj, dict) else None) or params.get("userId") or "unknown-user"
 
     push_url = None
+    push_config = {}
     try:
-        push_url = params.get("configuration", {}).get("pushNotificationConfig", {}).get("url")
+        push_config = params.get("configuration", {}).get("pushNotificationConfig", {}) or {}
+        push_url = push_config.get("url")
     except Exception:
         push_url = None
+        push_config = {}
 
     # If we have a push URL, send immediate acknowledgement and spawn follow-up
     if push_url:
@@ -137,12 +140,12 @@ async def reflective_assistant(request: Request):
                     msg = result.get("message") or "Done."
                 else:
                     msg = str(result)
-                await send_telex_followup(push_url, msg)
+                await send_telex_followup(push_url, msg, push_config)
             except Exception as e:
                 logger.exception("Error in background follow-up task: %s", e)
                 # Push the error back so the user is informed quickly
                 try:
-                    await send_telex_followup(push_url, f"Error: {e}")
+                    await send_telex_followup(push_url, f"Error: {e}", push_config)
                 except Exception:
                     pass
 

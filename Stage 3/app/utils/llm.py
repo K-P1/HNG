@@ -221,17 +221,67 @@ def plan_actions(message: str) -> Dict[str, Any]:
     for a in actions:
         if not isinstance(a, dict):
             continue
-        t = str(a.get("type", "")).strip()
-        t = type_map.get(t, t)
+        # Some planners use {action: verb, type: subject} pairs instead of our {type: operation}
+        verb = str(a.get("action", "")).lower().strip()
+        subject = str(a.get("type", "")).lower().strip()
+
+        # Start with raw type, then normalize; will be overridden by (verb,subject) mapping if present
+        t = type_map.get(subject or str(a.get("type", "")).strip(), str(a.get("type", "")).strip())
+
         p = a.get("params") or {}
         if not isinstance(p, dict):
             p = {}
+
+        # If planner provided flat parameters alongside action/type pair, merge them into params
+        if not p:
+            # Copy non-control keys as params
+            p = {k: v for k, v in a.items() if k not in {"action", "type", "params"}}
+
+        # Normalize common (verb,subject) pairs to our operation types
+        op_from_pair = None
+        if verb and subject:
+            if subject in {"task", "todo", "todos"}:
+                if verb in {"add", "create"}:
+                    op_from_pair = "create_task"
+                elif verb in {"list", "show", "get"}:
+                    op_from_pair = "list_tasks"
+                elif verb in {"update", "complete", "set"}:
+                    op_from_pair = "update_task"
+                elif verb in {"delete", "remove"}:
+                    op_from_pair = "delete_task"
+            elif subject in {"tasks"}:
+                if verb in {"list", "show", "get"}:
+                    op_from_pair = "list_tasks"
+            elif subject in {"journal", "note"}:
+                if verb in {"add", "create"}:
+                    op_from_pair = "create_journal"
+                elif verb in {"update", "set"}:
+                    op_from_pair = "update_journal"
+                elif verb in {"delete", "remove"}:
+                    op_from_pair = "delete_journal"
+            elif subject in {"journals", "notes"}:
+                if verb in {"list", "show", "get"}:
+                    op_from_pair = "list_journals"
+
+        if op_from_pair:
+            t = op_from_pair
+        else:
+            # Fallback: the 'type' field may already be an operation string
+            t = type_map.get(str(a.get("type", "")).strip(), str(a.get("type", "")).strip())
 
         # Param normalizations
         if t == "create_task":
             # Allow title as alias for description
             if "description" not in p and isinstance(p.get("title"), str):
                 p["description"] = p.get("title")
+            # Combine due_date and due_time into a single due_date string the executor can parse
+            dd_val = p.get("due_date")
+            dt_val = p.get("due_time")
+            if isinstance(dd_val, str) and isinstance(dt_val, str):
+                dd = dd_val.strip()
+                dt = dt_val.strip()
+                if dd and dt:
+                    p["due_date"] = f"{dd} {dt}".strip()
         elif t in {"update_task", "delete_task"}:
             if "description" not in p and "query" not in p and isinstance(p.get("title"), str):
                 p["description"] = p.get("title")
