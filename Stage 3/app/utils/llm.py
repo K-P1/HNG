@@ -159,6 +159,9 @@ def extract_actions(text: str) -> Dict[str, List[Dict[str, Any]]]:
         "- Allowed type: 'todo' or 'journal'.\n"
         "- Allowed action: 'create' | 'read' | 'update' | 'delete'.\n"
         "- For todo.create: params MUST include {\"description\": string}. If a due time exists, also include \"due\" (string like 'tomorrow', 'next Monday 9am'). Keep description concise and imperative (e.g., 'fix my headset').\n"
+        "- For todo.read (list tasks): Extract optional filters if present in the message and place them under params using these exact keys: \n"
+        "  {status: 'pending'|'completed', limit: number, dueBefore: string, dueAfter: string, tags: string[] or string, query: string}.\n"
+        "  Only include filters that are explicitly implied by the message; omit unknowns.\n"
         "- For journal.create: params MUST include {\"entry\": string}.\n"
         "- For todo.update/delete of many: include params.scope with one of 'all', 'pending', or 'completed'. For bulk update also include params.status (e.g., 'completed').\n"
         "- For update/delete: prefer an explicit \"id\" when user provides it; otherwise include a discriminating field such as \"description\" (todo) or \"entry\" (journal).\n"
@@ -175,7 +178,7 @@ def extract_actions(text: str) -> Dict[str, List[Dict[str, Any]]]:
 
     # Log raw model content for debugging (should be JSON per response_format)
     try:
-        logger.info("extract_actions: raw model content: %s", content)
+        logger.debug("extract_actions: raw model content: %s", content)
     except Exception:
         pass
 
@@ -212,5 +215,5 @@ def extract_actions(text: str) -> Dict[str, List[Dict[str, Any]]]:
             "params": act.get("params", {}),
         })
 
-    logger.info("extract_actions: produced %d validated actions: %s", len(cleaned_actions), cleaned_actions)
+    logger.info("extract_actions: produced %d validated actions", len(cleaned_actions))
     return {"actions": cleaned_actions}

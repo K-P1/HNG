@@ -60,6 +60,10 @@ async def execute_actions(user_id: str, actions: List[Dict[str, Any]], original_
             if isinstance(maybe, datetime):
                 return maybe
             import dateparser  # type: ignore
+            # Prefer future dates to better handle phrases like "next Tuesday morning"
+            dt = dateparser.parse(str(maybe), settings={"PREFER_DATES_FROM": "future"})
+            if dt:
+                return dt
             return dateparser.parse(str(maybe))
         except Exception:
             return None
@@ -106,15 +110,73 @@ async def execute_actions(user_id: str, actions: List[Dict[str, Any]], original_
                     metadata["executed"].append({"type": "todo.create", "task_id": task.id})
 
                 elif a == "read":
-                    tasks = await crud.get_tasks(user_id)
+                    # Extract optional filters from planner params
+                    status = (p.get("status") or None)
+                    limit = p.get("limit")
+                    due_before_raw = p.get("dueBefore") or p.get("due_before")
+                    due_after_raw = p.get("dueAfter") or p.get("due_after")
+                    query = p.get("query") or p.get("description") or p.get("title")
+                    tags = p.get("tags")
+                    if isinstance(tags, str):
+                        tags = [tags]
+                    due_before = parse_dt(due_before_raw)
+                    due_after = parse_dt(due_after_raw)
+
+                    tasks = await crud.get_tasks_filtered(
+                        user_id,
+                        status=status,
+                        limit=(int(limit) if isinstance(limit, int) or (isinstance(limit, str) and str(limit).isdigit()) else None),
+                        due_before=due_before,
+                        due_after=due_after,
+                        query=(str(query) if query else None),
+                        tags=tags,
+                    )
+
+                    # Log concise summary
+                    titles_preview = ", ".join([t.description for t in tasks[:3]]) if tasks else ""
+                    logger.info(
+                        "todo.read: filters status=%s,limit=%s,dueBefore=%s,dueAfter=%s,query=%s,tags=%s -> %d tasks (first3=%s)",
+                        status,
+                        limit,
+                        due_before,
+                        due_after,
+                        query,
+                        tags,
+                        len(tasks),
+                        titles_preview,
+                    )
+
                     if not tasks:
-                        responses.append("You have no pending tasks.")
+                        responses.append("No matching tasks found.")
                     else:
                         lines = ["Here are your tasks:"]
                         for tsk in tasks:
                             lines.append(f"- {tsk.id}: {tsk.description} [{tsk.status}]")
                         responses.append("\n".join(lines))
-                    metadata["executed"].append({"type": "todo.read", "count": len(tasks)})
+
+                    # Include structured task list in metadata for artifacts/follow-ups
+                    metadata["task_list"] = [
+                        {
+                            "id": t.id,
+                            "description": t.description,
+                            "status": t.status,
+                            "due_date": (t.due_date.isoformat() if t.due_date else None),
+                            "created_at": (t.created_at.isoformat() if t.created_at else None),
+                        }
+                        for t in tasks
+                    ]
+                    metadata["executed"].append({
+                        "type": "todo.read",
+                        "count": len(tasks),
+                        "filters": {
+                            "status": status,
+                            "limit": limit,
+                            "dueBefore": (due_before.isoformat() if due_before else None),
+                            "dueAfter": (due_after.isoformat() if due_after else None),
+                            "query": (str(query) if query else None),
+                            "tags": (tags or []),
+                        },
+                    })
 
                 elif a == "update":
                     scope = (p.get("scope") or "").strip().lower()
@@ -144,16 +206,24 @@ async def execute_actions(user_id: str, actions: List[Dict[str, Any]], original_
                                 metadata_errors.append({"type": "todo.update", "reason": "not_found", "query": str(desc_q)})
                                 continue
                             tid = matches[0].id
+                        # Coerce task id to int to satisfy DB driver requirements (e.g., asyncpg)
+                        try:
+                            tid_int = int(tid)
+                        except (TypeError, ValueError):
+                            msg = f"Couldn't update task: invalid id '{tid}'."
+                            responses.append(msg)
+                            metadata_errors.append({"type": "todo.update", "reason": "invalid_id", "task_id": tid})
+                            continue
                         task = await crud.update_task(
-                            tid,
+                            tid_int,
                             description=p.get("description"),
                             status=p.get("status"),
                             due_date=parse_dt(p.get("due_date")),
                         )
                         if task is None:
-                            msg = f"Task #{tid} wasn't found to update."
+                            msg = f"Task #{tid_int} wasn't found to update."
                             responses.append(msg)
-                            metadata_errors.append({"type": "todo.update", "reason": "not_found", "task_id": tid})
+                            metadata_errors.append({"type": "todo.update", "reason": "not_found", "task_id": tid_int})
                             continue
                         responses.append(f"Updated task #{task.id}.")
                         metadata["executed"].append({"type": "todo.update", "task_id": task.id})

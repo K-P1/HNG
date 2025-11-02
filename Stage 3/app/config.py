@@ -23,6 +23,12 @@ class Settings(BaseSettings):
     # Agent naming
     a2a_agent_name: str = Field(default="Raven", alias="A2A_AGENT_NAME")
 
+    # Async configuration for A2A handling (see .env.example for modes)
+    # Unset → honor request.configuration.blocking
+    # false/0/no → force synchronous
+    # true/1/yes → prefer async with push_url (unless blocking: true)
+    a2a_async_enabled: Optional[str] = Field(default=None, alias="A2A_ASYNC_ENABLED")
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

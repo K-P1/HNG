@@ -35,13 +35,39 @@ def test_a2a_reflective_assistant_monkeypatched(client, monkeypatch):
 	assert resp.status_code == 200
 	body = resp.json()
 
-	# Basic JSON-RPC shape
+	# A2A-compliant JSON-RPC response
 	assert body.get("jsonrpc") == "2.0"
 	assert body.get("id") == "test-123"
 	result = body.get("result")
 	assert isinstance(result, dict)
-	messages = result.get("messages")
-	assert isinstance(messages, list) and len(messages) > 0
-	first = messages[0]
-	assert first.get("role") == "assistant"
-	assert "Added" in first.get("content", "")
+
+	# TaskResult core fields
+	assert result.get("kind") == "task"
+	assert isinstance(result.get("id"), str)
+	assert isinstance(result.get("contextId"), str)
+
+	status = result.get("status")
+	assert isinstance(status, dict)
+	assert status.get("state") == "completed"
+	assert isinstance(status.get("timestamp"), str)
+
+	# Status message structure
+	msg = status.get("message")
+	assert isinstance(msg, dict)
+	assert msg.get("role") == "agent"
+	parts = msg.get("parts")
+	assert isinstance(parts, list) and len(parts) > 0
+	first_part = parts[0]
+	assert first_part.get("kind") == "text"
+	assert "Added" in (first_part.get("text") or "")
+
+	# Artifacts exist with at least assistantResponse
+	artifacts = result.get("artifacts")
+	assert isinstance(artifacts, list)
+	assert len(artifacts) >= 1
+	assert isinstance(artifacts[0].get("parts"), list)
+
+	# History includes the user message
+	history = result.get("history")
+	assert isinstance(history, list)
+	assert history and history[0].get("role") == "user"

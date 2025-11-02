@@ -1,6 +1,6 @@
 import logging
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Iterable, Dict, Any
 from sqlalchemy import select, func, desc
 from app.database import AsyncSessionLocal
 from app.models import models as db
@@ -40,6 +40,54 @@ async def get_tasks(user_id: str) -> List[db.Task]:
         tasks = list(result.scalars())
         logger.info("Fetched %d tasks for user %s", len(tasks), user_id)
         return tasks
+
+
+async def get_tasks_filtered(
+    user_id: str,
+    *,
+    status: Optional[str] = None,
+    limit: Optional[int] = None,
+    due_before: Optional[datetime] = None,
+    due_after: Optional[datetime] = None,
+    query: Optional[str] = None,
+    tags: Optional[Iterable[str]] = None,
+) -> List[db.Task]:
+    tasks = await get_tasks(user_id)
+
+    q = (query or "").strip().lower()
+    tag_list = [t.strip().lower() for t in (list(tags) if tags else []) if str(t).strip()]
+    st = (status or "").strip().lower() or None
+
+    def _match(t: db.Task) -> bool:
+        if st and (t.status or "").lower() != st:
+            return False
+        if due_before and t.due_date and t.due_date >= due_before:
+            return False
+        if due_after and t.due_date and t.due_date <= due_after:
+            return False
+        desc = (t.description or "").lower()
+        if q and q not in desc:
+            return False
+        if tag_list and not all(tag in desc for tag in tag_list):
+            return False
+        return True
+
+    filtered = [t for t in tasks if _match(t)]
+    if isinstance(limit, int) and limit > 0:
+        filtered = filtered[: int(limit)]
+
+    logger.info(
+        "get_tasks_filtered: user=%s filters={status:%s,limit:%s,dueBefore:%s,dueAfter:%s,query:%s,tags:%s} -> %d result(s)",
+        user_id,
+        st,
+        limit,
+        due_before,
+        due_after,
+        q or None,
+        tag_list or None,
+        len(filtered),
+    )
+    return filtered
 
 
 async def find_tasks_by_description(user_id: str, query: str) -> List[db.Task]:
@@ -240,4 +288,3 @@ async def delete_journals_bulk(user_id: str, *, scope: str = "all") -> int:
         await dbs.commit()
         logger.info("Bulk deleted %d journal(s) for user %s (scope=%s)", count, user_id, scope)
         return count
-# --- Additional CRUD operations can be added here as needed -----------------

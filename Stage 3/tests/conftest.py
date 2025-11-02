@@ -1,4 +1,5 @@
 import os
+import sys
 import asyncio
 import pytest
 from dotenv import load_dotenv
@@ -6,6 +7,10 @@ from fastapi.testclient import TestClient
 
 # Ensure .env is loaded, then FORCE SQLite for tests regardless of .env
 load_dotenv()
+# Ensure project root is importable
+ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if ROOT_DIR not in sys.path:
+    sys.path.insert(0, ROOT_DIR)
 # Hard override: always use SQLite for tests to avoid asyncpg/event loop issues on Windows
 os.environ["TEST_DATABASE_URL"] = "sqlite+aiosqlite:///./test.db"
 os.environ["DATABASE_URL"] = os.environ["TEST_DATABASE_URL"]

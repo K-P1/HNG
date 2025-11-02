@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field
 from typing import Literal, Optional, List, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import uuid4
 
 class MessagePart(BaseModel):
@@ -44,7 +44,8 @@ class JSONRPCRequest(BaseModel):
 
 class TaskStatus(BaseModel):
     state: Literal["working", "completed", "input-required", "failed"]
-    timestamp: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    # Use timezone-aware UTC timestamp to avoid deprecation warnings
+    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     message: Optional[A2AMessage] = None
 
 class Artifact(BaseModel):
