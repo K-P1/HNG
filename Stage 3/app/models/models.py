@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from sqlalchemy import Integer, String, Text, DateTime
 from sqlalchemy.orm import declarative_base
 from datetime import datetime, timezone
@@ -13,8 +15,8 @@ class Task(Base):
     user_id: Mapped[str] = mapped_column(String(255), index=True)
     description: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(50), default="pending")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
-    due_date: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    due_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class Journal(Base):
@@ -25,5 +27,5 @@ class Journal(Base):
     entry: Mapped[str] = mapped_column(Text)
     summary: Mapped[str] = mapped_column(Text, nullable=True)
     sentiment: Mapped[str] = mapped_column(String(50), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 

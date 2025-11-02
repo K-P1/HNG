@@ -14,16 +14,14 @@ dependencies = [
     "uvicorn[standard]",
     "sqlalchemy",
     "pydantic",
+    "pydantic-settings",
     "python-dotenv",
     "psycopg2-binary",
-    "openai",
     "groq",
     "alembic",
-    "mysql-connector-python>=9.5.0",
-    "pymysql>=1.1.2",
-    "aiosqlite>=0.21.0",
-    "aiomysql>=0.3.2",
     "dateparser>=1.2.0",
+    "asyncpg",
+    "aiosqlite>=0.21.0",
 ]
 
 [tool.setuptools.packages.find]

@@ -1,203 +1,243 @@
-
 import logging
-from typing import Optional, List
 from datetime import datetime
-import logging
 from typing import Optional, List
-from app.database import AsyncSessionLocal
-from app.models.models import Task, Journal
 from sqlalchemy import select, func, desc
+from app.database import AsyncSessionLocal
+from app.models import models as db
 
 logger = logging.getLogger("crud")
 
 
-async def create_task(user_id: str, description: str, due_date: Optional[datetime] = None) -> Task:
-    async with AsyncSessionLocal() as db:
-        try:
-            task = Task(user_id=user_id, description=description)
-            if due_date is not None:
-                task.due_date = due_date
-            db.add(task)
-            await db.commit()
-            await db.refresh(task)
-            logger.info(f"Task created successfully for user_id={user_id}, task_id={task.id}")
-            return task
-        except Exception as e:
-            logger.error(f"Failed to create task for user_id={user_id}: {e}")
-            raise
+# --- Generic DB helpers ------------------------------------------------------
+
+async def _get_or_none(session, model, id_):
+    obj = await session.get(model, id_)
+    if not obj:
+        logger.warning("%s with id=%s not found.", model.__name__, id_)
+    return obj
 
 
-async def get_tasks(user_id: str) -> List[Task]:
-    async with AsyncSessionLocal() as db:
-        try:
-            result = await db.execute(select(Task).where(Task.user_id == user_id))
-            tasks = list(result.scalars())
-            logger.info(f"Fetched {len(tasks)} tasks for user_id={user_id}")
-            return tasks
-        except Exception as e:
-            logger.error(f"Failed to fetch tasks for user_id={user_id}: {e}")
-            raise
+async def _commit_refresh(session, obj):
+    await session.commit()
+    await session.refresh(obj)
+    return obj
 
 
-async def find_tasks_by_description(user_id: str, query: str) -> List[Task]:
-    """Find tasks where description contains the query (case-insensitive), most recent first."""
-    async with AsyncSessionLocal() as db:
-        try:
-            q = (query or "").strip().lower()
-            if not q:
-                return []
-            stmt = (
-                select(Task)
-                .where(Task.user_id == user_id)
-                .where(func.lower(Task.description).like(f"%{q}%"))
-                .order_by(desc(Task.created_at))
-            )
-            result = await db.execute(stmt)
-            return list(result.scalars())
-        except Exception as e:
-            logger.error("Failed to search tasks for user_id=%s: %s", user_id, e)
-            raise
+# --- Task Operations ---------------------------------------------------------
+
+async def create_task(user_id: str, description: str, due_date: Optional[datetime] = None) -> db.Task:
+    async with AsyncSessionLocal() as dbs:
+        task = db.Task(user_id=user_id, description=description, due_date=due_date)
+        dbs.add(task)
+        await _commit_refresh(dbs, task)
+        logger.info("Created task %s for user %s", task.id, user_id)
+        return task
 
 
-async def complete_task(task_id: int) -> Optional[Task]:
-    async with AsyncSessionLocal() as db:
-        try:
-            task = await db.get(Task, task_id)
-            if not task:
-                logger.warning(f"Task with id={task_id} not found for completion.")
-                return None
-            task.status = "completed"
-            await db.commit()
-            await db.refresh(task)
-            logger.info(f"Task id={task_id} marked as completed.")
-            return task
-        except Exception as e:
-            logger.error(f"Failed to complete task id={task_id}: {e}")
-            raise
+async def get_tasks(user_id: str) -> List[db.Task]:
+    async with AsyncSessionLocal() as dbs:
+        result = await dbs.execute(select(db.Task).where(db.Task.user_id == user_id))
+        tasks = list(result.scalars())
+        logger.info("Fetched %d tasks for user %s", len(tasks), user_id)
+        return tasks
 
 
-async def update_task(task_id: int, *, description: Optional[str] = None, status: Optional[str] = None, due_date: Optional[datetime] = None) -> Optional[Task]:
-    async with AsyncSessionLocal() as db:
-        try:
-            task = await db.get(Task, task_id)
-            if not task:
-                logger.warning("Task with id=%s not found for update.", task_id)
-                return None
-            if description is not None:
-                task.description = description
-            if status is not None:
-                task.status = status
-            if due_date is not None:
-                task.due_date = due_date
-            await db.commit()
-            await db.refresh(task)
-            logger.info("Task id=%s updated.", task_id)
-            return task
-        except Exception as e:
-            logger.error("Failed to update task id=%s: %s", task_id, e)
-            raise
+async def find_tasks_by_description(user_id: str, query: str) -> List[db.Task]:
+    query = (query or "").strip().lower()
+    if not query:
+        return []
+    async with AsyncSessionLocal() as dbs:
+        stmt = (
+            select(db.Task)
+            .where(db.Task.user_id == user_id)
+            .where(func.lower(db.Task.description).like(f"%{query}%"))
+            .order_by(desc(db.Task.created_at))
+        )
+        result = await dbs.execute(stmt)
+        return list(result.scalars())
+
+
+async def update_task(
+    task_id: int,
+    *,
+    description: Optional[str] = None,
+    status: Optional[str] = None,
+    due_date: Optional[datetime] = None,
+) -> Optional[db.Task]:
+    async with AsyncSessionLocal() as dbs:
+        task = await _get_or_none(dbs, db.Task, task_id)
+        if not task:
+            return None
+        if description is not None:
+            task.description = description
+        if status is not None:
+            task.status = status
+        if due_date is not None:
+            task.due_date = due_date
+        await _commit_refresh(dbs, task)
+        logger.info("Updated task %s", task.id)
+        return task
+
+
+async def complete_task(task_id: int) -> Optional[db.Task]:
+    return await update_task(task_id, status="completed")
 
 
 async def delete_task(task_id: int) -> bool:
-    async with AsyncSessionLocal() as db:
-        try:
-            task = await db.get(Task, task_id)
-            if not task:
-                logger.warning("Task with id=%s not found for delete.", task_id)
-                return False
-            await db.delete(task)
-            await db.commit()
-            logger.info("Task id=%s deleted.", task_id)
-            return True
-        except Exception as e:
-            logger.error("Failed to delete task id=%s: %s", task_id, e)
-            raise
+    async with AsyncSessionLocal() as dbs:
+        task = await _get_or_none(dbs, db.Task, task_id)
+        if not task:
+            return False
+        await dbs.delete(task)
+        await dbs.commit()
+        logger.info("Deleted task %s", task.id)
+        return True
 
 
-async def create_journal(user_id: str, entry: str, summary: Optional[str] = None, sentiment: Optional[str] = None) -> Journal:
-    async with AsyncSessionLocal() as db:
-        try:
-            j = Journal(user_id=user_id, entry=entry, summary=summary, sentiment=sentiment)
-            db.add(j)
-            await db.commit()
-            await db.refresh(j)
-            logger.info(f"Journal entry created for user_id={user_id}, journal_id={j.id}")
-            return j
-        except Exception as e:
-            logger.error(f"Failed to create journal entry for user_id={user_id}: {e}")
-            raise
+# --- Bulk Task Operations ----------------------------------------------------
+
+async def update_all_tasks_status(user_id: str, status: str, *, scope: str = "all") -> int:
+    """
+    Update status for tasks matching scope for a user.
+    scope: 'all' | 'pending' | 'completed'
+    Returns number of tasks updated.
+    """
+    scope = (scope or "all").lower()
+    async with AsyncSessionLocal() as dbs:
+        result = await dbs.execute(select(db.Task).where(db.Task.user_id == user_id))
+        tasks = list(result.scalars())
+        count = 0
+        for t in tasks:
+            if scope == "pending" and t.status == "completed":
+                continue
+            if scope == "completed" and t.status != "completed":
+                continue
+            if t.status != status:
+                t.status = status
+                count += 1
+        await dbs.commit()
+        logger.info("Bulk updated %d task(s) for user %s with status=%s (scope=%s)", count, user_id, status, scope)
+        return count
 
 
-async def update_journal(journal_id: int, *, entry: Optional[str] = None, summary: Optional[str] = None, sentiment: Optional[str] = None) -> Optional[Journal]:
-    async with AsyncSessionLocal() as db:
-        try:
-            j = await db.get(Journal, journal_id)
-            if not j:
-                logger.warning("Journal with id=%s not found for update.", journal_id)
-                return None
-            if entry is not None:
-                j.entry = entry
-            if summary is not None:
-                j.summary = summary
-            if sentiment is not None:
-                j.sentiment = sentiment
-            await db.commit()
-            await db.refresh(j)
-            logger.info("Journal id=%s updated.", journal_id)
-            return j
-        except Exception as e:
-            logger.error("Failed to update journal id=%s: %s", journal_id, e)
-            raise
+async def delete_tasks_bulk(user_id: str, *, scope: str = "all") -> int:
+    """
+    Delete tasks matching scope for a user.
+    scope: 'all' | 'pending' | 'completed'
+    Returns number of tasks deleted.
+    """
+    scope = (scope or "all").lower()
+    async with AsyncSessionLocal() as dbs:
+        result = await dbs.execute(select(db.Task).where(db.Task.user_id == user_id))
+        tasks = list(result.scalars())
+        count = 0
+        for t in tasks:
+            if scope == "pending" and t.status == "completed":
+                continue
+            if scope == "completed" and t.status != "completed":
+                continue
+            await dbs.delete(t)
+            count += 1
+        await dbs.commit()
+        logger.info("Bulk deleted %d task(s) for user %s (scope=%s)", count, user_id, scope)
+        return count
+
+
+# --- Journal Operations ------------------------------------------------------
+
+async def create_journal(
+    user_id: str,
+    entry: str,
+    summary: Optional[str] = None,
+    sentiment: Optional[str] = None,
+) -> db.Journal:
+    async with AsyncSessionLocal() as dbs:
+        journal = db.Journal(user_id=user_id, entry=entry, summary=summary, sentiment=sentiment)
+        dbs.add(journal)
+        await _commit_refresh(dbs, journal)
+        logger.info("Created journal %s for user %s", journal.id, user_id)
+        return journal
+
+
+async def update_journal(
+    journal_id: int,
+    *,
+    entry: Optional[str] = None,
+    summary: Optional[str] = None,
+    sentiment: Optional[str] = None,
+) -> Optional[db.Journal]:
+    async with AsyncSessionLocal() as dbs:
+        journal = await _get_or_none(dbs, db.Journal, journal_id)
+        if not journal:
+            return None
+        if entry is not None:
+            journal.entry = entry
+        if summary is not None:
+            journal.summary = summary
+        if sentiment is not None:
+            journal.sentiment = sentiment
+        await _commit_refresh(dbs, journal)
+        logger.info("Updated journal %s", journal.id)
+        return journal
 
 
 async def delete_journal(journal_id: int) -> bool:
-    async with AsyncSessionLocal() as db:
-        try:
-            j = await db.get(Journal, journal_id)
-            if not j:
-                logger.warning("Journal with id=%s not found for delete.", journal_id)
-                return False
-            await db.delete(j)
-            await db.commit()
-            logger.info("Journal id=%s deleted.", journal_id)
-            return True
-        except Exception as e:
-            logger.error("Failed to delete journal id=%s: %s", journal_id, e)
-            raise
+    async with AsyncSessionLocal() as dbs:
+        journal = await _get_or_none(dbs, db.Journal, journal_id)
+        if not journal:
+            return False
+        await dbs.delete(journal)
+        await dbs.commit()
+        logger.info("Deleted journal %s", journal.id)
+        return True
 
 
-async def get_journals(user_id: str, limit: int = 20) -> List[Journal]:
-    async with AsyncSessionLocal() as db:
-        try:
-            result = await db.execute(
-                select(Journal)
-                .where(Journal.user_id == user_id)
-                .order_by(Journal.created_at.desc())
-                .limit(limit)
-            )
-            journals = list(result.scalars())
-            logger.info(f"Fetched {len(journals)} journals for user_id={user_id}")
-            return journals
-        except Exception as e:
-            logger.error(f"Failed to fetch journals for user_id={user_id}: {e}")
-            raise
+async def get_journals(user_id: str, limit: int = 20) -> List[db.Journal]:
+    async with AsyncSessionLocal() as dbs:
+        result = await dbs.execute(
+            select(db.Journal)
+            .where(db.Journal.user_id == user_id)
+            .order_by(desc(db.Journal.created_at))
+            .limit(limit)
+        )
+        journals = list(result.scalars())
+        logger.info("Fetched %d journals for user %s", len(journals), user_id)
+        return journals
 
 
-async def find_journals_by_entry(user_id: str, query: str) -> List[Journal]:
-    """Find journals where entry contains the query (case-insensitive), most recent first."""
-    async with AsyncSessionLocal() as db:
-        try:
-            q = (query or "").strip().lower()
-            if not q:
-                return []
-            stmt = (
-                select(Journal)
-                .where(Journal.user_id == user_id)
-                .where(func.lower(Journal.entry).like(f"%{q}%"))
-                .order_by(desc(Journal.created_at))
-            )
-            result = await db.execute(stmt)
-            return list(result.scalars())
-        except Exception as e:
-            logger.error("Failed to search journals for user_id=%s: %s", user_id, e)
-            raise
+async def find_journals_by_entry(user_id: str, query: str) -> List[db.Journal]:
+    query = (query or "").strip().lower()
+    if not query:
+        return []
+    async with AsyncSessionLocal() as dbs:
+        stmt = (
+            select(db.Journal)
+            .where(db.Journal.user_id == user_id)
+            .where(func.lower(db.Journal.entry).like(f"%{query}%"))
+            .order_by(desc(db.Journal.created_at))
+        )
+        result = await dbs.execute(stmt)
+        return list(result.scalars())
+ 
+ 
+async def delete_journals_bulk(user_id: str, *, scope: str = "all") -> int:
+    """
+    Bulk delete journals for a user.
+    Currently supported scopes: 'all'. Returns number of journals deleted.
+    """
+    scope = (scope or "all").lower()
+    async with AsyncSessionLocal() as dbs:
+        result = await dbs.execute(select(db.Journal).where(db.Journal.user_id == user_id))
+        journals = list(result.scalars())
+        count = 0
+        if scope == "all":
+            for j in journals:
+                await dbs.delete(j)
+                count += 1
+        else:
+            # For any unsupported scope, do nothing (future extension point)
+            count = 0
+        await dbs.commit()
+        logger.info("Bulk deleted %d journal(s) for user %s (scope=%s)", count, user_id, scope)
+        return count
+# --- Additional CRUD operations can be added here as needed -----------------

@@ -1,60 +1,101 @@
 # Reflective Assistant
 
-FastAPI-powered AI agent that classifies incoming messages as todos or journal entries, stores them in a database, and replies concisely. Groq is used as the agent brain (no fallbacks—misconfiguration fails fast).
+FastAPI-powered AI agent that turns freeform messages into structured todo and journal actions. It plans with Groq (strict JSON only), executes against a Postgres database, and speaks JSON-RPC 2.0 for Telex-style A2A integrations.
 
-**Live API:** [hng-production-2944.up.railway.app](hng-production-2944.up.railway.app)
-**Swagger Docs:** [hng-production-2944.up.railway.app/docs](hng-production-2944.up.railway.app/docs)
+• Health: GET / → { status: "ok" }
+• Docs: /docs (Swagger UI)
 
-## Features
+## Highlights
 
-- Groq-powered intent classification (todo | journal | unknown)
-- Todo action extraction and journal summarization + sentiment
-- REST API endpoints for Telex integration and data listing
-- SQLAlchemy ORM with Alembic migrations (SQLite local; Postgres in deploy)
-- Clean layering: routes → services → crud → models
+- Strict JSON planning: the LLM must return a validated schema (no prose)
+- End-to-end flows for todo and journal: create/read/update/delete, bulk ops
+- Telex-ready A2A endpoint with optional async follow-up callbacks
+- Async SQLAlchemy + Alembic; Postgres for the app, SQLite for tests
+- Windows-friendly dev setup with uv and pytest
 
-## Project structure
+## What’s inside
 
 ```
 app/
-	main.py           # FastAPI app, CORS, lifespan, includes router
-	routes.py         # Lean route handlers only
-	services.py       # Business logic, calls LLM + CRUD
-	crud.py           # DB read/write operations
-	models.py         # ORM models only
-	database.py       # Engine, SessionLocal, init_db
-	schemas.py        # Pydantic request/response models
-	utils/
-		llm.py          # Groq-only helpers (fail fast)
+  main.py            # FastAPI app, CORS, async lifespan (startup DB init, graceful shutdown)
+  routes.py          # HTTP routes: tasks, journal, A2A agent
+  crud.py            # Async CRUD over SQLAlchemy models
+  database.py        # Async engine/session setup; Postgres-only at runtime; SQLite in tests
+  schemas.py         # Pydantic models for API IO
+  config.py          # Pydantic settings (env-backed)
+  models/
+    models.py        # ORM models: Task, Journal
+    a2a.py           # Pydantic types for A2A shapes (reference)
+  services/
+    common.py        # date parsing, list formatting helpers
+    llm_service.py   # plan (strict) + execute actions, dedupe, bulk ops
+    task_service.py  # thin layer over CRUD for tasks
+    journal_service.py # thin layer over CRUD for journals
+    telex_service.py # A2A orchestration: text extraction, preview, follow-up
+  utils/
+    llm.py           # Groq-only helpers; classification + planner (JSON only)
+    telex_push.py    # Async follow-up sender (JSON-RPC aware)
+    json_logger.py   # Pretty JSON log writer for A2A traffic
 alembic/
-	env.py            # Migration config wired to DATABASE_URL and models.Base
-	versions/         # Migration scripts
-.env.example        # Template for env vars
-pyproject.toml      # Project metadata and dependencies
-requirements.txt    # Pinned runtime deps (optional with uv)
-uv.lock             # uv lockfile
+  env.py             # Async migrations; converts common drivers to async variants
+  versions/          # Migration scripts (initial schema included)
+pyproject.toml       # Project metadata, dependencies, pytest opts
+pytest.ini           # Async pytest config
+tests/               # Unit tests for planner, executor, and A2A
 ```
+
+## How it works (overview)
+
+1. Text in → strict plan out
+
+- `utils/llm.extract_actions(text)` asks Groq for JSON only: { actions: [{ type, action, params }] }.
+- The schema is strictly validated. Any deviation raises and fails fast.
+
+2. Execute plan
+
+- `services.llm_service.execute_actions(user_id, actions, original_text)` applies each action:
+  - Todo: create/read/update/delete (+ bulk via scope: all|pending|completed)
+  - Journal: create/read/update/delete
+  - Dedupe on todo.create within a user (case/space-insensitive)
+  - Friendly, concise response text is assembled; structured metadata is returned
+
+3. Telex-style A2A
+
+- Route: POST `/a2a/agent/{agent_name}` extracts text from `params.message.parts` (and nested `data`), then falls back to `params.message.text` or `params.text`.
+- If a `pushNotificationConfig.url` exists, the handler:
+  - Immediately returns a preview message (e.g., planned steps)
+  - Schedules a background follow-up POST to the provided URL with the final reply
+- All A2A responses are strict JSON-RPC 2.0 and echo the incoming `id`.
+
+## Environment variables
+
+- ENV: app environment (default: development)
+- DEBUG: bool flag (default: false)
+- DATABASE_URL: required for the running app; must be Postgres with async driver. Examples:
+  - postgresql+asyncpg://user:pass@host:5432/dbname
+  - Note: the runtime app explicitly rejects non-Postgres URLs. Tests auto-switch to SQLite.
+- LLM_PROVIDER: must be groq
+- GROQ_API_KEY: required; the app fails fast if missing
+- GROQ_MODEL: default llama-3.3-70b-versatile
+- A2A_AGENT_NAME: default Raven (path is dynamic: /a2a/agent/{name})
+- TELEX_LOG_PATH: optional JSONL raw log path (default: logs/telex_traffic.jsonl)
+- TELEX_PRETTY_LOG_PATH: optional pretty log path (default: logs/telex_traffic_pretty.log)
 
 ## Prerequisites
 
 - Windows PowerShell
 - Python 3.10+
-- uv (package/dependency manager by Astral)
-  - Optional installation (if uv isn’t installed):
-    - powershell
-    - iwr https://astral.sh/uv/install.ps1 | iex
+- uv (dependency manager by Astral)
 
-If you plan to connect to MySQL asynchronously (recommended with the async SQLAlchemy setup in this repo) install `aiomysql` in your environment. For SQLite async support we use `aiosqlite`.
-
-Example (within the project virtualenv):
+Install uv if needed:
 
 ```powershell
-& .venv\Scripts\pip.exe install aiomysql aiosqlite
+iwr https://astral.sh/uv/install.ps1 | iex
 ```
 
-## Setup with uv
+## Quick start (dev)
 
-1. Create your `.env` from the example
+1. Create your environment file
 
 ```powershell
 copy .env.example .env
@@ -62,24 +103,19 @@ copy .env.example .env
 
 Edit `.env` and set at minimum:
 
-- `LLM_PROVIDER=groq`
-- `GROQ_API_KEY=<your_groq_api_key>`
-- `DATABASE_URL` (SQLite local default is fine; set Postgres in deploy)
+- LLM_PROVIDER=groq
+- GROQ_API_KEY=<your_groq_api_key>
+- DATABASE_URL=postgresql+asyncpg://user:pass@host:5432/dbname
 
-2. Install dependencies and create the virtual environment
+2. Install dependencies
 
 ```powershell
 uv sync
 ```
 
-This will create `.venv` and install all dependencies from `pyproject.toml` / `uv.lock`.
-
-3. Initialize/upgrade the database schema (Alembic)
-
-This project uses an async SQLAlchemy engine. The included `alembic/env.py` supports async engines (it will convert common sync drivers to their async equivalents when possible, e.g. `+pymysql` → `+aiomysql`, `sqlite://` → `sqlite+aiosqlite://`). Make sure the matching async DB driver is installed in the environment where you run Alembic.
+3. Apply migrations
 
 ```powershell
-# Uses DATABASE_URL from .env
 uv run alembic upgrade head
 ```
 
@@ -89,142 +125,138 @@ uv run alembic upgrade head
 uv run uvicorn app.main:app --reload --port 8000
 ```
 
-Health check: http://127.0.0.1:8000/health
+Open http://127.0.0.1:8000/ and http://127.0.0.1:8000/docs
 
-Interactive docs: http://127.0.0.1:8000/docs
+## API surface
 
-- `DATABASE_URL` – default `sqlite:///./app.db`; when using the async setup set an async driver in the URL.
-  Examples:
+- GET `/` → `{ "status": "ok", "message": "..." }`
 
-  - Async MySQL: `mysql+aiomysql://user:pass@host:3306/dbname`
-  - Async SQLite (local file): `sqlite+aiosqlite:///./dev.db`
-  - Postgres (sync): `postgresql+psycopg2://user:pass@host:5432/dbname` (you can also use an async Postgres driver such as `asyncpg` via `postgresql+asyncpg://...` if you migrate drivers)
+- GET `/tasks?user_id=u1` → TaskOut[]
 
-- `GROQ_API_KEY` – required (no fallbacks)
-- `LLM_PROVIDER` – must be `groq`
-- `GROQ_MODEL` – default `llama-3.3-70b-versatile`
-- `ENV`, `DEBUG` – optional app flags
+- POST `/tasks/complete?task_id=1` → `{ status, task_id, status_after }`
 
-## API
+- GET `/journal?user_id=u1&limit=20` → JournalOut[]
 
-- GET `/health` → `{ "status": "ok" }`
+- POST `/a2a/agent/{agent_name}` → JSON-RPC 2.0
 
-- A2A (Agent-to-Agent) JSON-RPC endpoint — Telex integration
-
-  The app exposes a JSON-RPC 2.0-compatible A2A endpoint that Telex (or
-  another agent) can call. The default path is:
-
-  ```text
-  POST /a2a/agent/reflectiveAssistant
-  ```
-
-  This path is dynamic and controlled by the `A2A_AGENT_NAME` environment
-  variable (fallback `AGENT_NAME`). To guarantee the exact path above, set
-  `A2A_AGENT_NAME=reflectiveAssistant` in your `.env` (see `.env.example`).
-
-  - Incoming request (example JSON-RPC 2.0 payload):
+  - Request (minimal):
 
     ```json
     {
       "jsonrpc": "2.0",
-      "id": "b9d4caa5ecf749e0a59ba5614d01f266",
+      "id": "123",
       "method": "message/send",
       "params": {
         "message": {
           "role": "user",
-          "parts": [
-            {
-              "kind": "text",
-              "text": "hi i want to submit my project tomorrow"
-            }
-          ]
-        }
+          "parts": [{ "kind": "text", "text": "add buy milk to my todo" }]
+        },
+        "user_id": "u1"
       }
     }
     ```
 
-  - Expected reply (JSON-RPC 2.0, Telex-friendly):
+  - Response (no push URL provided):
 
     ```json
     {
       "jsonrpc": "2.0",
-      "id": "b9d4caa5ecf749e0a59ba5614d01f266",
+      "id": "123",
       "result": {
         "messages": [
-          {
-            "role": "assistant",
-            "content": "Got it — I’ve added that to your todo list and scheduled a reminder for tomorrow!"
-          }
+          { "role": "assistant", "content": "Added 'buy milk' (id: 1)" }
         ],
         "metadata": {
           "status": "ok",
-          "task_id": 123
+          "executed": [{ "type": "todo.create", "task_id": 1 }]
         }
       }
     }
     ```
 
-  - Notes about the JSON-RPC contract and `id` handling:
+  - Response when `pushNotificationConfig.url` is set:
+    - Immediate reply contains a preview (e.g., "Planned steps: todo")
+    - Final result is POSTed asynchronously to the provided URL as a JSON-RPC message
 
-    | Case                | What You Do                                                           |
-    | ------------------- | --------------------------------------------------------------------- |
-    | Telex sends an `id` | Echo it back exactly.                                                 |
-    | No `id` in request  | Generate one (UUID).                                                  |
-    | Never               | Return a response without an `"id"`. It breaks the JSON-RPC contract. |
+Contract notes:
 
-  - The service will try to extract text from several common shapes
-    (`params.message.parts`, `params.message.text`, `params.text`). Any
-    internal fields (status, task_id, summary, sentiment) are included
-    under `result.metadata` while the user-facing reply is in
-    `result.messages[0].content`.
+- Always echo the incoming `id` in the response.
+- Never omit the `id` field (JSON-RPC contract).
+- Text is constructed from `params.message.parts` (including nested `data.text`) and fallbacks.
 
-- GET `/tasks?user_id=u1` → list of tasks (TaskOut[])
+## Planning schema (strict)
 
-- POST `/tasks/complete?task_id=1` → `{ status, task_id, status_after }`
+The LLM must return only JSON with this shape:
 
-- GET `/journal?user_id=u1` → list of journals (JournalOut[])
-
-## Migrations (Alembic) with uv
-
-All commands read `DATABASE_URL` from `.env`.
-
-```powershell
-# Apply latest migrations
-uv run alembic upgrade head
-
-# Create a new migration after model changes
-uv run alembic revision --autogenerate -m "your message"
-
-# If your local DB already has the schema and you want Alembic to match it
-uv run alembic stamp head
+```json
+{
+  "actions": [
+    { "type": "todo" | "journal", "action": "create" | "read" | "update" | "delete", "params": {}}
+  ]
+}
 ```
 
-Note: Alembic is fully configured in `alembic/`. An initial revision reflecting current models is included.
+Rules enforced in `utils.llm`:
 
-## Deployment (Postgres)
+- For `todo.create`: params.description is required (string). Optional: due or due_date (string).
+- For `journal.create`: params.entry is required (string).
+- For bulk task ops: `update`/`delete` can include `scope` in { all, pending, completed }.
+- For `update`/`delete`: provide `id` if available; otherwise a discriminating field (e.g., description).
 
-1. Set `DATABASE_URL` to your Postgres connection string in the deployment environment.
+## Database and migrations
 
-2. Run migrations on the target database:
+- Runtime app: Postgres required. Use `postgresql+asyncpg://...`.
+- Tests: SQLite is auto-used; pooling disabled for stability on Windows.
+- Migrations are async-aware and convert common sync URLs to async ones when possible.
+
+Alembic commands (use PowerShell):
 
 ```powershell
-uv run alembic upgrade head
+uv run alembic upgrade head          # Apply latest
+uv run alembic revision --autogenerate -m "changes"  # Generate after model edits
+uv run alembic stamp head            # Mark current DB state as up-to-date
 ```
 
-3. Start the API process (example with uvicorn):
+## Development and testing
+
+- Run tests (LLM calls are monkeypatched in unit tests):
+
+```powershell
+uv run pytest -q
+```
+
+Notes:
+
+- Tests force SQLite (`sqlite+aiosqlite:///./test.db`) and set a Windows-friendly event loop policy.
+- You can safely run tests without a Postgres instance or a Groq API key.
+
+## Logging
+
+- App logs: `app.log` (rolling append)
+- Telex traffic (pretty): `logs/telex_traffic_pretty.log` (redacts tokens; includes summarized and raw payloads)
+- Configure paths with `TELEX_LOG_PATH` and `TELEX_PRETTY_LOG_PATH`
+
+## Deployment
+
+1. Set `DATABASE_URL=postgresql+asyncpg://...` in the environment
+2. Run migrations: `uv run alembic upgrade head`
+3. Start the server:
 
 ```powershell
 uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-## Telex integration (high level)
-
-- Expose your service via ngrok/Railway and configure Telex to POST to `/telex-agent`.
-- The endpoint detects intent, stores data, and returns a concise reply.
-- You can validate quickly with the interactive docs at `/docs`.
-
 ## Troubleshooting
 
-- LLM error (503): ensure `LLM_PROVIDER=groq` and a valid `GROQ_API_KEY` are set.
-- Alembic `ModuleNotFoundError: app`: run commands from the project root; we add the root to `sys.path` in `alembic/env.py`.
-- SQLite locking on Windows: close any open DB viewers and retry; consider switching to Postgres sooner.
+- Database init failed at startup
+  - Ensure `DATABASE_URL` is set and uses Postgres with async driver (postgresql+asyncpg)
+- LLM errors
+  - Set `LLM_PROVIDER=groq` and provide a valid `GROQ_API_KEY`
+- Alembic cannot import `app`
+  - Run from project root; `alembic/env.py` adds the root to `sys.path`
+- Windows + SQLite locks
+  - Close DB viewers and retry; for the app itself, prefer Postgres.
+
+## License
+
+MIT (see LICENSE if present)

@@ -1,11 +1,11 @@
-
 import logging
-from typing import Tuple, Dict, Any, List
 import os
 import json
+from typing import Any, Dict, List
 
 logger = logging.getLogger("llm")
-
+logger.addHandler(logging.StreamHandler())
+logger.setLevel(logging.INFO)
 
 
 def _require_env():
@@ -17,23 +17,32 @@ def _require_env():
         raise RuntimeError("GROQ_API_KEY is not configured")
 
 
-
 def _get_groq_client():
-    from groq import Groq  # type: ignore
+    # Lazy import so tests can run without groq installed if desired
+    try:
+        from groq import Groq  # type: ignore
+    except Exception as e:
+        logger.exception("Failed to import groq client: %s", e)
+        raise
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
         logger.error("GROQ_API_KEY is not configured")
         raise RuntimeError("GROQ_API_KEY is not configured")
-    logger.info("Groq client initialized.")
+    logger.debug("Groq client initialized.")
     return Groq(api_key=api_key)
 
 
-
-def _groq_chat(messages: list[dict[str, str]], *, response_json: bool = False, temperature: float = 0.2, max_tokens: int = 256) -> str:
+def _groq_chat(messages: List[Dict[str, str]], *, response_json: bool = False,
+               temperature: float = 0.2, max_tokens: int = 256) -> str:
+    """
+    Minimal wrapper around Groq chat completion.
+    When response_json=True we request a JSON object response via response_format.
+    This function returns the raw content string (may be JSON text).
+    """
     _require_env()
     client = _get_groq_client()
     model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
-    kwargs: Dict[str, Any] = {
+    kwargs = {
         "model": model,
         "messages": messages,
         "temperature": temperature,
@@ -41,8 +50,7 @@ def _groq_chat(messages: list[dict[str, str]], *, response_json: bool = False, t
     }
     if response_json:
         kwargs["response_format"] = {"type": "json_object"}
-
-    logger.info(f"Sending chat completion to Groq: model={model}, messages={messages}")
+    logger.debug("Sending chat request to Groq: model=%s, temperature=%s", model, temperature)
     resp = client.chat.completions.create(**kwargs)
     if not resp or not getattr(resp, "choices", None):
         logger.error("Groq returned no choices")
@@ -51,318 +59,158 @@ def _groq_chat(messages: list[dict[str, str]], *, response_json: bool = False, t
     if not content:
         logger.error("Groq returned empty content")
         raise RuntimeError("Groq returned empty content")
-    logger.info("Groq chat completion successful.")
+    logger.debug("Groq response received.")
     return content
 
 
 def classify_intent(text: str) -> str:
-    """Classify text as 'todo', 'journal', or 'unknown'. Fails fast on errors."""
-    logger.info(f"Classifying intent for text: {text}")
+    """
+    Classify the user's message intent into one of: "todo", "journal", "unknown".
+    This function enforces strict JSON-only responses from the LLM and fails fast
+    if anything is malformed.
+    """
+    logger.info("classify_intent: classifying text: %s", text)
     system = (
-        "You are an intent classifier for a personal assistant."
-        " Decide if the user's message is a TODO (actionable task),"
-        " a JOURNAL (a reflective entry or feeling), or UNKNOWN."
-        " Respond ONLY as a compact JSON object with key 'intent'"
-        " whose value is one of: 'todo', 'journal', 'unknown'."
+        "You are an intent classifier. Determine whether the user's message "
+        "is a TODO (actionable task) or a JOURNAL (reflective entry). "
+        "Respond ONLY with JSON: {\"intent\": \"todo\" | \"journal\" | \"unknown\"}."
     )
     user = f"Message: {text}"
+    content = _groq_chat(
+        [{"role": "system", "content": system}, {"role": "user", "content": user}],
+        response_json=True,
+        temperature=0.0,
+        max_tokens=40,
+    )
+    # content should be JSON text
     try:
-        content = _groq_chat([
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ], response_json=True, temperature=0.0, max_tokens=40)
         data = json.loads(content)
-        intent = str(data.get("intent", "unknown")).lower()
-        if intent not in {"todo", "journal", "unknown"}:
-            logger.warning(f"Intent classified as unknown for text: {text}")
-            return "unknown"
-        logger.info(f"Intent classified as '{intent}' for text: {text}")
-        return intent
     except Exception as e:
-        logger.error(f"Failed to classify intent for text: {text}: {e}")
-        return "unknown"
-        raise RuntimeError("Invalid intent from Groq")
+        logger.exception("classify_intent: model returned invalid JSON: %s", e)
+        raise RuntimeError("Invalid JSON returned by intent classifier") from e
+
+    intent = str(data.get("intent", "")).lower()
+    if intent not in {"todo", "journal", "unknown"}:
+        logger.error("classify_intent: unexpected intent value: %s", intent)
+        raise RuntimeError(f"Unexpected intent value from model: {intent!r}")
+    logger.info("classify_intent: classified as '%s'", intent)
     return intent
 
 
-def extract_todo_action(text: str) -> str:
-    """Extract a concise action phrase for a TODO. Fails fast on errors."""
-    system = (
-        "Extract a concise actionable TODO phrase from the user's message."
-        " Return ONLY JSON: {\"action\": \"...\"}."
-    )
-    user = f"Message: {text}"
-    content = _groq_chat([
-        {"role": "system", "content": system},
-        {"role": "user", "content": user},
-    ], response_json=True, temperature=0.2, max_tokens=60)
-
-    data = json.loads(content)
-    action = str(data.get("action", "")).strip()
-    if not action:
-        raise RuntimeError("Groq did not return an action")
-    return action
-
-
-def analyze_entry(text: str) -> Tuple[str, str]:
-    """Return (sentiment, summary). Fails fast on errors.
-
-    Sentiment: 'positive' | 'neutral' | 'negative'
-    Summary: a short 1–2 sentence summary
+def _validate_action_shape(action: Dict[str, Any]) -> None:
     """
-    system = (
-        "You analyze journal entries."
-        " Return a short summary (<= 2 sentences) and a sentiment label"
-        " from {positive, neutral, negative}."
-        " Respond ONLY as JSON: {\"summary\": \"...\", \"sentiment\": \"...\"}."
-    )
-    user = f"Entry: {text}"
-    content = _groq_chat([
-        {"role": "system", "content": system},
-        {"role": "user", "content": user},
-    ], response_json=True, temperature=0.2, max_tokens=120)
-
-    data = json.loads(content)
-    summary = str(data.get("summary", "")).strip()
-    sentiment = str(data.get("sentiment", "")).lower()
-    if not summary:
-        raise RuntimeError("Groq did not return a summary")
-    if sentiment not in {"positive", "neutral", "negative"}:
-        raise RuntimeError("Groq returned invalid sentiment")
-    return sentiment, summary
-
-
-def plan_actions(message: str) -> Dict[str, Any]:
-    """Return a structured plan of actions for the assistant to execute.
-
-    The model must return strict JSON with this shape:
+    Raises RuntimeError if action does not conform to the strict schema:
     {
-      "actions": [
-        {
-          "type": "create_task" | "list_tasks" | "update_task" | "delete_task" |
-                   "create_journal" | "list_journals" | "update_journal" | "delete_journal",
-          "params": { ... }
-        }, ...
-      ]
+      "type": "todo" | "journal",
+      "action": "create" | "read" | "update" | "delete",
+      "params": dict
     }
-
-    Allowed params per type (selectors can be by id OR by text when id is unknown):
-    - create_task: {"description": str, "due_date": str|null}
-    - list_tasks: {"user_id": str|null}
-    - update_task: {"id": int|null, "description": str|null, "status": "pending|completed"|null, "due_date": str|null, "query": str|null, "title": str|null}
-    - delete_task: {"id": int|null, "description": str|null, "query": str|null, "title": str|null}
-    - create_journal: {"entry": str}
-    - list_journals: {"user_id": str|null, "limit": int|null}
-    - update_journal: {"id": int|null, "entry": str|null, "summary": str|null, "sentiment": "positive|neutral|negative"|null, "query": str|null}
-    - delete_journal: {"id": int|null, "entry": str|null, "summary": str|null, "query": str|null}
     """
-    logger.info("Planning actions via Groq for message: %s", message)
-    system = (
-        "You are a controller for a todo+journal assistant. Parse the user's message and output a STRICT JSON object "
-        "with an 'actions' array describing the operations to perform. Support multiple actions in order. "
-        "When the user does not provide an id for update/delete, include a text selector (e.g., description/query/title/entry) so the backend can resolve the item. "
-        "Only output JSON, no extra text. Use the provided schema and be conservative with IDs if not specified."
-    )
-    user = f"Message: {message}\n\nReturn only JSON with an 'actions' array per the schema."
+    if not isinstance(action, dict):
+        raise RuntimeError("Each action must be an object")
+    t = action.get("type")
+    a = action.get("action")
+    p = action.get("params")
+    if t not in {"todo", "journal"}:
+        raise RuntimeError(f"Action 'type' must be 'todo' or 'journal', got: {t!r}")
+    if a not in {"create", "read", "update", "delete"}:
+        raise RuntimeError(f"Action 'action' must be one of create/read/update/delete, got: {a!r}")
+    if p is None:
+        # allow empty params but force a dict
+        action["params"] = {}
+    elif not isinstance(p, dict):
+        raise RuntimeError("Action 'params' must be a JSON object")
 
-    content = _groq_chat([
-        {"role": "system", "content": system},
-        {"role": "user", "content": user},
-    ], response_json=True, temperature=0.1, max_tokens=400)
+    # Stricter per-action validation
+    p = action.get("params", {})
+    if t == "todo" and a == "create":
+        desc = p.get("description")
+        if not isinstance(desc, str) or not desc.strip():
+            raise RuntimeError("todo.create requires params.description (non-empty string)")
+        # Optional due/due_date must be string if present
+        if "due" in p and p.get("due") is not None and not isinstance(p.get("due"), str):
+            raise RuntimeError("todo.create params.due must be a string if provided")
+        if "due_date" in p and p.get("due_date") is not None and not isinstance(p.get("due_date"), str):
+            raise RuntimeError("todo.create params.due_date must be a string if provided")
+    if t == "journal" and a == "create":
+        entry = p.get("entry")
+        if not isinstance(entry, str) or not entry.strip():
+            raise RuntimeError("journal.create requires params.entry (non-empty string)")
+
+    # Light validation for bulk operations on tasks
+    if t == "todo" and a in {"update", "delete"}:
+        scope = p.get("scope")
+        if scope is not None and not isinstance(scope, str):
+            raise RuntimeError("todo.update/delete params.scope must be a string if provided")
+        if isinstance(scope, str) and scope.strip().lower() not in {"all", "pending", "completed"}:
+            raise RuntimeError("todo.update/delete params.scope must be one of 'all', 'pending', 'completed'")
+        if a == "update" and "scope" in p and "status" not in p:
+            raise RuntimeError("todo.update bulk requires params.status when params.scope is provided")
+
+
+def extract_actions(text: str) -> Dict[str, List[Dict[str, Any]]]:
+    logger.info("extract_actions: planning actions for text: %s", text)
+    system = (
+        "You are a planner for a todo+journal assistant. Parse the user's message and "
+        "respond ONLY with a STRICT JSON object with key 'actions'.\n\n"
+        "Rules (MUST follow exactly):\n"
+        "- Output JSON only (no prose).\n"
+        "- actions is an array of objects with EXACT shape: {\"type\": string, \"action\": string, \"params\": object}.\n"
+        "- Allowed type: 'todo' or 'journal'.\n"
+        "- Allowed action: 'create' | 'read' | 'update' | 'delete'.\n"
+        "- For todo.create: params MUST include {\"description\": string}. If a due time exists, also include \"due\" (string like 'tomorrow', 'next Monday 9am'). Keep description concise and imperative (e.g., 'fix my headset').\n"
+        "- For journal.create: params MUST include {\"entry\": string}.\n"
+        "- For todo.update/delete of many: include params.scope with one of 'all', 'pending', or 'completed'. For bulk update also include params.status (e.g., 'completed').\n"
+        "- For update/delete: prefer an explicit \"id\" when user provides it; otherwise include a discriminating field such as \"description\" (todo) or \"entry\" (journal).\n"
+        "- If the input asks for multiple things, return multiple actions in order.\n"
+        "- Do not add extra keys beyond type, action, params; do not include comments."
+    )
+    user = f"Message: {text}\n\nReturn only the strict JSON described above."
+    content = _groq_chat(
+        [{"role": "system", "content": system}, {"role": "user", "content": user}],
+        response_json=True,
+        temperature=0.1,
+        max_tokens=512,
+    )
+
+    # Log raw model content for debugging (should be JSON per response_format)
+    try:
+        logger.info("extract_actions: raw model content: %s", content)
+    except Exception:
+        pass
 
     try:
         data = json.loads(content)
     except Exception as e:
-        logger.error("Groq returned invalid JSON for plan_actions: %s", e)
-        raise
+        logger.exception("extract_actions: model returned invalid JSON: %s", e)
+        raise RuntimeError("Invalid JSON returned by action planner") from e
 
-    # Normalize minimal structure
-    actions = data.get("actions")
-    # Also accept nested shape { "plan": { "actions": [...] } }
-    if actions is None and isinstance(data.get("plan"), dict):
-        actions = data["plan"].get("actions")
+    # Basic shape check
+    if not isinstance(data, dict) or "actions" not in data:
+        logger.error("extract_actions: missing 'actions' key in planner output")
+        raise RuntimeError("Planner output missing required 'actions' key")
 
-    # Log the raw plan (truncated) to diagnose empty-actions fallbacks
-    try:
-        preview = json.dumps(data)
-        if len(preview) > 500:
-            preview = preview[:500] + "..."
-        logger.debug("plan_actions raw JSON preview: %s", preview)
-    except Exception:
-        pass
-
+    actions = data["actions"]
     if not isinstance(actions, list):
-        logger.warning("plan_actions: missing or invalid 'actions'; returning empty plan")
-        return {"actions": []}
-    # Basic sanitization and normalization
-    cleaned: List[Dict[str, Any]] = []
+        logger.error("extract_actions: 'actions' must be a list")
+        raise RuntimeError("'actions' must be a list")
 
-    type_map = {
-        # tasks
-        "add_task": "create_task",
-        "create_todo": "create_task",
-        "add_todo": "create_task",
-        "show_tasks": "list_tasks",
-        "list_todos": "list_tasks",
-        "get_tasks": "list_tasks",
-        "complete_task": "update_task",
-        "update_task_status": "update_task",
-        "remove_task": "delete_task",
-        "delete_todo": "delete_task",
-        # journals
-        "add_journal": "create_journal",
-        "create_note": "create_journal",
-        "show_journals": "list_journals",
-        "list_notes": "list_journals",
-        "update_note": "update_journal",
-        "remove_note": "delete_journal",
-    }
+    # Validate each action strictly
+    for idx, act in enumerate(actions):
+        try:
+            _validate_action_shape(act)
+        except Exception as e:
+            logger.exception("extract_actions: invalid action at index %d: %s", idx, e)
+            raise RuntimeError(f"Invalid action at index {idx}: {e}") from e
+    
+    # Clean actions to ensure no extra fields
+    cleaned_actions = []
+    for act in actions:
+        cleaned_actions.append({
+            "type": act["type"],
+            "action": act["action"],
+            "params": act.get("params", {}),
+        })
 
-    for a in actions:
-        if not isinstance(a, dict):
-            continue
-        # Some planners use {action: verb, type: subject} pairs instead of our {type: operation}
-        raw_type = str(a.get("type", "")).lower().strip()
-        verb = str(a.get("action", "") or a.get("verb", "")).lower().strip()
-        subject = str(a.get("subject", "") or a.get("entity", "") or a.get("target", "") or a.get("collection", "")).lower().strip() or raw_type
-
-        # Start with raw type, then normalize; will be overridden by (verb,subject) mapping if present
-        t = type_map.get(subject or str(a.get("type", "")).strip(), str(a.get("type", "")).strip())
-
-        p = a.get("params") or {}
-        if not isinstance(p, dict):
-            p = {}
-
-        # If planner provided flat parameters alongside action/type pair, merge them into params
-        if not p:
-            # Copy non-control keys as params
-            p = {k: v for k, v in a.items() if k not in {"action", "type", "params"}}
-
-        # Some planners nest arguments under an 'item' field. Flatten it into params.
-        item = a.get("item")
-        if isinstance(item, dict):
-            for k, v in item.items():
-                # Do not overwrite explicit params
-                if k not in p:
-                    p[k] = v
-            # Infer subject from item.kind/type if present
-            try:
-                ik = str(item.get("kind") or item.get("type") or "").lower().strip()
-                if ik and ik not in {"create", "list", "update", "delete", "remove", "add", "get", "show"}:
-                    subject = subject or ik
-            except Exception:
-                pass
-
-        # Merge optional selector object into params for id-less targeting
-        sel = a.get("selector")
-        if isinstance(sel, dict):
-            for k, v in sel.items():
-                # Do not overwrite explicit params
-                if k not in p:
-                    p[k] = v
-
-        # Normalize common (verb,subject) pairs to our operation types
-        op_from_pair = None
-        if verb and subject:
-            if subject in {"task", "todo", "todos"}:
-                if verb in {"add", "create"}:
-                    op_from_pair = "create_task"
-                elif verb in {"list", "show", "get"}:
-                    op_from_pair = "list_tasks"
-                elif verb in {"update", "complete", "set"}:
-                    op_from_pair = "update_task"
-                elif verb in {"delete", "remove"}:
-                    op_from_pair = "delete_task"
-            elif subject in {"tasks"}:
-                if verb in {"list", "show", "get"}:
-                    op_from_pair = "list_tasks"
-            elif subject in {"journal", "note"}:
-                if verb in {"add", "create"}:
-                    op_from_pair = "create_journal"
-                elif verb in {"update", "set"}:
-                    op_from_pair = "update_journal"
-                elif verb in {"delete", "remove"}:
-                    op_from_pair = "delete_journal"
-            elif subject in {"journals", "notes"}:
-                if verb in {"list", "show", "get"}:
-                    op_from_pair = "list_journals"
-
-        # If 'type' was actually a verb like 'create'/'list', promote it to verb when verb was empty
-        if not verb and raw_type in {"create", "add", "list", "show", "get", "update", "complete", "set", "delete", "remove"}:
-            verb = raw_type
-
-        # Try to infer operation from (verb, subject) or from params when subject is ambiguous
-        if op_from_pair:
-            t = op_from_pair
-        else:
-            # Fallback: the 'type' field may already be an operation string
-            t = type_map.get(str(a.get("type", "")).strip(), str(a.get("type", "")).strip())
-
-        # If still not in our allowed set, infer from verb + params
-        def infer_domain(params: Dict[str, Any], subj: str) -> str:
-            s = (subj or "").lower().strip()
-            if s in {"journal", "journals", "note", "notes"}:
-                return "journal"
-            # look at params
-            keys = {k.lower() for k in params.keys()}
-            if {"entry", "summary", "sentiment"} & keys:
-                return "journal"
-            return "task"
-
-        allowed = {
-            "create_task", "list_tasks", "update_task", "delete_task",
-            "create_journal", "list_journals", "update_journal", "delete_journal",
-        }
-
-        if t not in allowed and verb:
-            domain = infer_domain(p, subject)
-            if verb in {"create", "add"}:
-                t = "create_journal" if domain == "journal" else "create_task"
-            elif verb in {"list", "show", "get"}:
-                if domain == "journal":
-                    t = "list_journals"
-                else:
-                    t = "list_tasks"
-            elif verb in {"update", "set", "complete"}:
-                t = "update_journal" if domain == "journal" else "update_task"
-                # Map 'complete' to completed status if not provided
-                if verb == "complete" and t == "update_task" and "status" not in p:
-                    p["status"] = "completed"
-            elif verb in {"delete", "remove"}:
-                t = "delete_journal" if domain == "journal" else "delete_task"
-
-        # Param normalizations
-        if t == "create_task":
-            # Allow title as alias for description
-            if "description" not in p and isinstance(p.get("title"), str):
-                p["description"] = p.get("title")
-            # Combine due_date and due_time into a single due_date string the executor can parse
-            # Accept 'due' or ('due_date' + 'due_time')
-            if isinstance(p.get("due"), str) and not isinstance(p.get("due_date"), str):
-                p["due_date"] = p.get("due")
-            dd_val = p.get("due_date")
-            dt_val = p.get("due_time")
-            if isinstance(dd_val, str) and isinstance(dt_val, str):
-                dd = dd_val.strip()
-                dt = dt_val.strip()
-                if dd and dt:
-                    p["due_date"] = f"{dd} {dt}".strip()
-        elif t in {"update_task", "delete_task"}:
-            if "description" not in p and "query" not in p and isinstance(p.get("title"), str):
-                p["description"] = p.get("title")
-            # Map boolean completed -> status for update
-            if t == "update_task" and "completed" in p and "status" not in p:
-                try:
-                    if bool(p.get("completed")):
-                        p["status"] = "completed"
-                except Exception:
-                    pass
-        elif t == "update_journal":
-            sent = p.get("sentiment")
-            if isinstance(sent, dict) and "label" in sent:
-                p["sentiment"] = sent.get("label")
-
-        if t in allowed and isinstance(p, dict):
-            cleaned.append({"type": t, "params": p})
-    logger.debug("plan_actions cleaned actions count: %d", len(cleaned))
-    return {"actions": cleaned}
+    logger.info("extract_actions: produced %d validated actions: %s", len(cleaned_actions), cleaned_actions)
+    return {"actions": cleaned_actions}

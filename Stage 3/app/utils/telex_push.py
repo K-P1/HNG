@@ -12,97 +12,105 @@ async def send_telex_followup(
     push_config: Optional[Dict[str, Any]] = None,
     request_id: Optional[str] = None,
 ) -> None:
-    """Send a follow-up message to Telex after the initial response.
+    """
+    Send a follow-up message to Telex asynchronously.
 
-    If push_config contains authentication details, include Authorization header.
-    Expected shape (from Telex):
-    {
-        "url": str,
-        "token": str,                               # optional bearer token
-        "authentication": { "schemes": ["Bearer"] }  # optional scheme list
-    }
+    Used for long-running jobs where you want to send a second message
+    after the initial response without blocking the main queue.
+
+    Parameters
+    ----------
+    push_url : str
+        The callback or webhook URL provided by Telex.
+    message : str
+        The follow-up message text to send.
+    push_config : dict, optional
+        Optional dict containing token or authentication info:
+        {
+            "url": str,
+            "token": str,  # optional
+            "authentication": { "schemes": ["Bearer"] }
+        }
+    request_id : str, optional
+        Optional custom ID to correlate the message.
     """
     if not push_url:
-        logger.warning("No push URL provided; cannot send follow-up.")
+        logger.info("send_telex_followup: no push URL provided, skipping.")
         return
 
-    # Build headers (Authorization and/or X-TELEX-API-KEY if provided)
     headers = {"Content-Type": "application/json"}
-    scheme = "Bearer"
-    token = None
-    try:
-        if push_config and isinstance(push_config, dict):
-            token = push_config.get("token")
-            auth = push_config.get("authentication")
-            if isinstance(auth, dict):
-                schemes = auth.get("schemes")
-                if isinstance(schemes, list) and schemes:
-                    scheme = schemes[0] or scheme
-    except Exception:
-        token = None
+    token: Optional[str] = None
 
-    # Prefer Telex API key header if a token is provided
-    if token:
-        headers["X-TELEX-API-KEY"] = str(token)
-        if scheme:
-            headers["Authorization"] = f"{scheme} {token}"
-    logger.debug(
-        "Telex follow-up auth prepared: scheme=%s, token_present=%s, x_api=%s",
-        scheme,
-        bool(token),
-        "set" if headers.get("X-TELEX-API-KEY") else "unset",
-    )
+    # Prefer credentials nested under authentication per Telex guide; fallback to token
+    if isinstance(push_config, dict):
+        auth = push_config.get("authentication") or {}
+        if isinstance(auth, dict):
+            token = auth.get("credentials") or token
+            schemes = auth.get("schemes") or []
+            # If TelexApiKey is specified, use standard Bearer header
+            if isinstance(schemes, list) and schemes and token:
+                if schemes == ["TelexApiKey"]:
+                    headers["Authorization"] = f"Bearer {token}"
+                else:
+                    # Default to Bearer even for other schemes unless specified otherwise
+                    headers["Authorization"] = f"Bearer {token}"
+        # Fallback legacy token field
+        token = token or push_config.get("token")
+        if token and "Authorization" not in headers:
+            headers["Authorization"] = f"Bearer {token}"
 
-    is_telex_webhook = "/a2a/webhooks/" in (push_url or "")
+    # Determine payload format by URL: Telex webhooks expect a JSON-RPC method call
+    is_telex_webhook = ("/a2a/webhooks/" in push_url) or ("ping.telex.im" in push_url)
+
     if is_telex_webhook:
-        # Telex expects a JSON-RPC 2.0 payload with method "message/send"
         payload = {
             "jsonrpc": "2.0",
             "id": request_id or str(uuid.uuid4()),
             "method": "message/send",
             "params": {
                 "message": {
-                    # Telex requires kind on the message object
                     "kind": "message",
-                    # Required by Telex: unique message id
                     "messageId": str(uuid.uuid4()),
-                    # Role must be one of "user" | "agent"
                     "role": "agent",
-                    "parts": [
-                        {"kind": "text", "text": str(message)}
-                    ],
+                    "parts": [{"kind": "text", "text": str(message)}],
                 }
             },
         }
     else:
+        # Generic webhook: return-style result envelope
         payload = {
             "jsonrpc": "2.0",
-            "id": request_id or "followup",
+            "id": request_id or str(uuid.uuid4()),
             "result": {
                 "messages": [
-                    {"role": "assistant", "content": str(message)}
+                    {
+                        "role": "assistant",
+                        "content": str(message),
+                    }
                 ]
-            }
+            },
         }
 
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            logger.debug("Sending Telex follow-up to %s with payload=%s", push_url, payload)
+            logger.debug("Sending follow-up to %s", push_url)
+            # For Telex webhooks, both Authorization: Bearer <token> and X-TELEX-API-KEY
+            # are acceptable; we include Authorization and keep X-TELEX-API-KEY if legacy token provided
+            if token and "X-TELEX-API-KEY" not in headers:
+                headers["X-TELEX-API-KEY"] = str(token)
+
             resp = await client.post(push_url, json=payload, headers=headers)
-            try:
-                resp.raise_for_status()
-            except httpx.HTTPStatusError as he:
-                # Include body in logs to help diagnose 4xx payload issues
-                body = None
-                try:
-                    body = resp.json()
-                except Exception:
-                    try:
-                        body = resp.text
-                    except Exception:
-                        body = "<unavailable>"
-                logger.error("Telex follow-up failed: %s | response=%s", he, body)
-                raise
-            logger.info(f"Follow-up sent to Telex: {resp.status_code}")
+            resp.raise_for_status()
+            logger.info("Follow-up sent successfully (%s)", resp.status_code)
+    except httpx.HTTPStatusError as he:
+        # Include status and response body for clarity
+        body = None
+        try:
+            body = resp.text
+        except Exception:
+            body = "<unavailable>"
+        logger.error("Telex follow-up failed (%s): %s | body=%s", resp.status_code, he, body)
+        raise
     except Exception as e:
-        logger.error(f"Failed to send follow-up to Telex: {e}")
+        logger.error("Failed to send Telex follow-up: %s", e)
+        raise

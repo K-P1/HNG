@@ -1,123 +1,92 @@
 import os
 import sys
-import asyncio
 import json
-import types
-from fastapi.testclient import TestClient
+import pytest
 
 # Ensure project root is importable
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+# env and event loop policy are handled in conftest.py
 
-from app.main import app
-from app import services
-from app import database
-from app import crud
-
-
-def test_planner_create_and_list_tasks(monkeypatch):
-    # Use sqlite memory or dev db per app.database default init
-    asyncio.run(database.init_db_async())
-
-    # Monkeypatch the planner to emit two actions: create and list
-    def fake_plan_actions(message: str):
-        return {
-            "actions": [
-                {"type": "create_task", "params": {"description": "Finish stage 3"}},
-                {"type": "list_tasks", "params": {}},
-            ]
-        }
-
-    monkeypatch.setattr(services.llm, "plan_actions", fake_plan_actions)
-
-    result = asyncio.run(services.process_telex_message("u_test", "please add and list"))
-    assert result["status"] == "ok"
-    assert "Finish stage 3" in result["message"]
-    assert "Here are your tasks" in result["message"]
+from app import database, crud
+from app.services import llm_service
 
 
-def test_planner_update_and_delete_task(monkeypatch):
-    asyncio.run(database.init_db_async())
-    # seed a task
-    t = asyncio.run(crud.create_task("u_test2", "Temp task"))
-
-    def fake_plan_actions(message: str):
-        return {
-            "actions": [
-                {"type": "update_task", "params": {"id": t.id, "status": "completed"}},
-                {"type": "delete_task", "params": {"id": t.id}},
-            ]
-        }
-
-    monkeypatch.setattr(services.llm, "plan_actions", fake_plan_actions)
-
-    result = asyncio.run(services.process_telex_message("u_test2", "update then delete"))
-    assert result["status"] == "ok"
-    assert f"Updated task #{t.id}" in result["message"]
-    assert f"Deleted task #{t.id}" in result["message"]
+def _set_plan(monkeypatch, actions):
+	async def fake_plan_actions(message: str):
+		return {"actions": actions}
+	monkeypatch.setattr(llm_service, "plan_actions", fake_plan_actions)
 
 
-def test_planner_update_delete_task_by_description(monkeypatch):
-    asyncio.run(database.init_db_async())
-    # seed tasks
-    t1 = asyncio.run(crud.create_task("u_desc", "Finish stage 3"))
-    asyncio.run(crud.create_task("u_desc", "Some other task"))
+@pytest.mark.asyncio
+async def test_planner_create_and_list_tasks(monkeypatch):
+	_set_plan(monkeypatch, [
+		{"type": "todo", "action": "create", "params": {"description": "Finish stage 3"}},
+		{"type": "todo", "action": "read", "params": {}},
+	])
 
-    def fake_plan_actions(message: str):
-        return {
-            "actions": [
-                {"type": "update_task", "params": {"description": "Finish stage 3", "status": "completed"}},
-                {"type": "delete_task", "params": {"description": "Finish stage 3"}},
-            ]
-        }
+	res = await llm_service.execute_actions("u_test", [
+		{"type": "todo", "action": "create", "params": {"description": "Finish stage 3"}},
+		{"type": "todo", "action": "read", "params": {}},
+	], "please add and list")
 
-    monkeypatch.setattr(services.llm, "plan_actions", fake_plan_actions)
-    res = asyncio.run(services.process_telex_message("u_desc", "complete and remove by name"))
-    assert res["status"] == "ok"
-    assert "Updated task #" in res["message"]
-    assert "Deleted task #" in res["message"]
+	assert res["status"] == "ok"
+	assert "Finish stage 3" in res["message"]
+	assert "Here are your tasks" in res["message"]
 
 
-def test_planner_journal_flow(monkeypatch):
-    asyncio.run(database.init_db_async())
+@pytest.mark.asyncio
+async def test_planner_update_and_delete_task(monkeypatch):
+	t = await crud.create_task("u_test2", "Temp task")
 
-    def fake_plan_actions(message: str):
-        return {
-            "actions": [
-                {"type": "create_journal", "params": {"entry": "Today went well"}},
-                {"type": "list_journals", "params": {"limit": 5}},
-            ]
-        }
+	actions = [
+		{"type": "todo", "action": "update", "params": {"id": t.id, "status": "completed"}},
+		{"type": "todo", "action": "delete", "params": {"id": t.id}},
+	]
+	res = await llm_service.execute_actions("u_test2", actions, "update then delete")
 
-    # Don't call external LLM for analyze_entry inside create_journal
-    async def fake_analyze(entry: str):
-        return ("positive", "Good day")
-
-    monkeypatch.setattr(services.llm, "plan_actions", fake_plan_actions)
-    # analyze_entry is sync in our impl; service wraps with to_thread. Patch llm function directly.
-    monkeypatch.setattr(services.llm, "analyze_entry", lambda text: ("positive", "Good day"))
-
-    result = asyncio.run(services.process_telex_message("u_j", "journal please"))
-    assert result["status"] == "ok"
-    assert "Journal saved" in result["message"] or "Journal saved" in result["message"].lower()
-    assert "Your latest" in result["message"] or "No journal entries" in result["message"]
+	assert res["status"] == "ok"
+	assert f"Updated task #{t.id}" in res["message"]
+	assert f"Deleted task #{t.id}" in res["message"]
 
 
-def test_planner_update_delete_journal_by_text(monkeypatch):
-    asyncio.run(database.init_db_async())
+@pytest.mark.asyncio
+async def test_planner_update_delete_task_by_description(monkeypatch):
+	_ = await crud.create_task("u_desc", "Finish stage 3")
+	_ = await crud.create_task("u_desc", "Some other task")
 
-    # create a journal to target by text
-    j = asyncio.run(crud.create_journal("u_j2", "Finish stage 3 reflections", "Summary", "neutral"))
+	actions = [
+		{"type": "todo", "action": "update", "params": {"description": "Finish stage 3", "status": "completed"}},
+		{"type": "todo", "action": "delete", "params": {"description": "Finish stage 3"}},
+	]
+	res = await llm_service.execute_actions("u_desc", actions, "complete and remove by name")
+	assert res["status"] == "ok"
+	assert "Updated task #" in res["message"]
+	assert "Deleted task #" in res["message"]
 
-    def fake_plan_actions(message: str):
-        return {
-            "actions": [
-                {"type": "update_journal", "params": {"entry": "Finish stage 3", "summary": "Updated"}},
-                {"type": "delete_journal", "params": {"entry": "Finish stage 3"}},
-            ]
-        }
 
-    monkeypatch.setattr(services.llm, "plan_actions", fake_plan_actions)
-    res = asyncio.run(services.process_telex_message("u_j2", "update journal and delete by text"))
-    assert res["status"] == "ok"
-    assert "Updated journal #" in res["message"]
-    assert "Deleted journal #" in res["message"]
+@pytest.mark.asyncio
+async def test_planner_journal_flow(monkeypatch):
+
+	actions = [
+		{"type": "journal", "action": "create", "params": {"entry": "Today went well"}},
+		{"type": "journal", "action": "read", "params": {"limit": 5}},
+	]
+
+	res = await llm_service.execute_actions("u_j", actions, "journal please")
+	assert res["status"] == "ok"
+	assert "Journal saved" in res["message"] or "Journal saved" in res["message"].lower()
+	assert "Your latest" in res["message"] or "No journal entries" in res["message"]
+
+
+@pytest.mark.asyncio
+async def test_planner_update_delete_journal_by_text(monkeypatch):
+	_ = await crud.create_journal("u_j2", "Finish stage 3 reflections", "Summary", "neutral")
+
+	actions = [
+		{"type": "journal", "action": "update", "params": {"entry": "Finish stage 3", "summary": "Updated"}},
+		{"type": "journal", "action": "delete", "params": {"entry": "Finish stage 3"}},
+	]
+	res = await llm_service.execute_actions("u_j2", actions, "update journal and delete by text")
+	assert res["status"] == "ok"
+	assert "Updated journal #" in res["message"]
+	assert "Deleted journal #" in res["message"]
