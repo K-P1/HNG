@@ -12,16 +12,42 @@ async def process_telex_message(user_id: str, message: str) -> Dict[str, Any]:
     """Plan using strict schema and execute via llm_service executor."""
     text = (message or "").strip()
     logger.info("process_telex_message: received text='%s' (len=%d) for user_id=%s", text, len(text), user_id)
-    plan = await llm_service.plan_actions(text)
+    # Handle empty input gracefully (no 500s)
+    if not text:
+        return {
+            "status": "ok",
+            "message": "I didn't receive any text. Please send a task or a journal entry so I can help.",
+            "executed": [],
+            "errors": [{"type": "planner", "reason": "empty_input"}],
+        }
+
+    # Plan actions; convert planning failures into soft responses to avoid HTTP 500s
     try:
-        # Log the full planner output to aid debugging of fallbacks
-        logger.info("process_telex_message: planner output: %s", plan)
-    except Exception:
-        # Avoid logging crashes if plan is not serializable
-        logger.warning("process_telex_message: failed to log planner output (non-serializable)")
+        plan = await llm_service.plan_actions(text)
+        try:
+            # Log the full planner output to aid debugging of fallbacks
+            logger.info("process_telex_message: planner output: %s", plan)
+        except Exception:
+            # Avoid logging crashes if plan is not serializable
+            logger.warning("process_telex_message: failed to log planner output (non-serializable)")
+    except Exception as e:
+        logger.warning("process_telex_message: planning failed: %s", e)
+        return {
+            "status": "ok",
+            "message": "I couldn't understand any actionable steps from your message.",
+            "executed": [],
+            "errors": [{"type": "planner", "reason": "planning_failed", "detail": str(e)}],
+        }
+
     actions: List[Dict[str, Any]] = plan.get("actions", []) if isinstance(plan, dict) else []
     if not actions:
-        raise ValueError("Planner returned no actions")
+        return {
+            "status": "ok",
+            "message": "I couldn't detect any actionable steps from your message.",
+            "executed": [],
+            "errors": [{"type": "planner", "reason": "no_actions"}],
+        }
+
     result = await llm_service.execute_actions(user_id, actions, text)
     return result
 
