@@ -277,8 +277,6 @@ async def execute_actions(user_id: str, actions: List[Dict[str, Any]], original_
                 raise HTTPException(status_code=400, detail=f"Unknown type: {t}")
 
         except HTTPException:
-            # Propagate only 4xx errors for truly invalid requests (e.g., planner contract broken),
-            # but we already converted common 404s into soft messages above. Keep raising for others.
             raise
         except Exception as e:
             logger.exception("Action execution failed: %s", e)

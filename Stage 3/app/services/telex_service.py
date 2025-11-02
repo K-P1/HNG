@@ -12,7 +12,6 @@ async def process_telex_message(user_id: str, message: str) -> Dict[str, Any]:
     """Plan using strict schema and execute via llm_service executor."""
     text = (message or "").strip()
     logger.info("process_telex_message: received text='%s' (len=%d) for user_id=%s", text, len(text), user_id)
-    # Handle empty input gracefully (no 500s)
     if not text:
         return {
             "status": "ok",
@@ -21,7 +20,6 @@ async def process_telex_message(user_id: str, message: str) -> Dict[str, Any]:
             "errors": [{"type": "planner", "reason": "empty_input"}],
         }
 
-    # Plan actions; convert planning failures into soft responses to avoid HTTP 500s
     try:
         plan = await llm_service.plan_actions(text)
         try:
@@ -48,7 +46,16 @@ async def process_telex_message(user_id: str, message: str) -> Dict[str, Any]:
             "errors": [{"type": "planner", "reason": "no_actions"}],
         }
 
-    result = await llm_service.execute_actions(user_id, actions, text)
+    try:
+        result = await llm_service.execute_actions(user_id, actions, text)
+    except Exception as e:
+        logger.warning("process_telex_message: execution failed: %s", e)
+        return {
+            "status": "ok",
+            "message": "I ran into an error executing the planned steps.",
+            "executed": [],
+            "errors": [{"type": "executor", "reason": "execution_failed", "detail": str(e)}],
+        }
     return result
 
 
@@ -136,9 +143,22 @@ async def handle_a2a_request(payload: Dict[str, Any]) -> Dict[str, Any]:
             "result": {"messages": [{"role": "assistant", "content": preview}], "metadata": {"status": "processing"}},
         }
 
-    result = await process_telex_message(user_id, text)
-    return {
-        "jsonrpc": "2.0",
-        "id": request_id,
-        "result": {"messages": [{"role": "assistant", "content": result.get('message', '')}], "metadata": result},
-    }
+    try:
+        result = await process_telex_message(user_id, text)
+        return {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "result": {"messages": [{"role": "assistant", "content": result.get('message', '')}], "metadata": result},
+        }
+    except Exception as e:
+        logger.exception("handle_a2a_request: failed to process message: %s", e)
+        # Preserve JSON-RPC success envelope but signal error in content/metadata
+        error_msg = f"Error processing request: {e}"
+        return {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "result": {
+                "messages": [{"role": "assistant", "content": error_msg}],
+                "metadata": {"status": "error", "errors": [{"type": "internal", "detail": str(e)}]},
+            },
+        }
