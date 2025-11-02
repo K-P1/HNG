@@ -1,14 +1,4 @@
-import sys
-import os
 import json
-from dotenv import load_dotenv
-
-# Ensure project root is importable
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-load_dotenv()
-_test_db = os.getenv("TEST_DATABASE_URL")
-if _test_db:
-	os.environ["DATABASE_URL"] = _test_db
 
 from app.utils import llm
 

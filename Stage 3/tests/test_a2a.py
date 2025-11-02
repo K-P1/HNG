@@ -1,17 +1,10 @@
 import json
-import sys
 import os
-from fastapi.testclient import TestClient
 
-# Ensure project root is importable during tests and configure DB for tests
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-
-from app.main import app
 from app.services import llm_service
 
 
-def test_a2a_reflective_assistant_monkeypatched(monkeypatch):
-	client = TestClient(app)
+def test_a2a_reflective_assistant_monkeypatched(client, monkeypatch):
 
 	# Stub planner to return strict-schema create action (no external LLM)
 	async def fake_plan_actions(text: str):
