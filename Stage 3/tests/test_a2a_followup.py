@@ -4,6 +4,8 @@ from app.services import llm_service
 
 
 def test_a2a_followup_posts_task_list(client, monkeypatch):
+	# Ensure env doesn't force sync for this test (isolate from .env)
+	monkeypatch.delenv("A2A_ASYNC_ENABLED", raising=False)
 	# Patch planner to list tasks via strict schema
 	async def fake_plan_actions(message: str):
 		return {"actions": [{"type": "todo", "action": "read", "params": {}}]}

@@ -4,7 +4,7 @@ import json
 from typing import Any, Dict, List
 
 logger = logging.getLogger("llm")
-logger.addHandler(logging.StreamHandler())
+# Don't add handler - use the root logger's handler to avoid duplicates
 logger.setLevel(logging.INFO)
 
 

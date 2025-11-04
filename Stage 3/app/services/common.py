@@ -1,33 +1,44 @@
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 logger = logging.getLogger("services.common")
 
 
 def parse_dt(maybe: Any) -> Optional[datetime]:
-    """Parse various datetime formats or return None if invalid."""
+    """Parse various datetime formats and return timezone-aware datetime in UTC."""
     if not maybe:
         return None
 
     if isinstance(maybe, datetime):
-        return maybe
+        # If already timezone-aware, return as-is; otherwise make it UTC
+        if maybe.tzinfo is not None:
+            return maybe
+        return maybe.replace(tzinfo=timezone.utc)
 
     if isinstance(maybe, (int, float)):
         try:
-            return datetime.fromtimestamp(maybe)
+            # fromtimestamp with timezone argument returns timezone-aware datetime
+            return datetime.fromtimestamp(maybe, tz=timezone.utc)
         except Exception:
             return None
 
     if isinstance(maybe, str):
         for fmt in ("%Y-%m-%d", "%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%SZ"):
             try:
-                return datetime.strptime(maybe, fmt)
+                dt = datetime.strptime(maybe, fmt)
+                # Make timezone-aware (assume UTC if no timezone specified)
+                return dt.replace(tzinfo=timezone.utc)
             except Exception:
                 continue
         try:
             import dateparser  # type: ignore
-            return dateparser.parse(maybe)
+            dt = dateparser.parse(maybe)
+            if dt:
+                # If dateparser returned timezone-naive, make it UTC
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                return dt
         except Exception:
             return None
 

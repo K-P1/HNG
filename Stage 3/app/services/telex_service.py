@@ -1,7 +1,7 @@
 import os
 import asyncio
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from uuid import uuid4
 from app.services import llm_service
 from app.utils.telex_push import send_telex_followup
@@ -15,8 +15,55 @@ import app.models.a2a as a2a_models
 logger = logging.getLogger("services.telex")
 
 
+def _normalize_text(s: Optional[str]) -> str:
+    """Normalize text by trimming and removing trivial HTML wrappers."""
+    if not isinstance(s, str):
+        return ""
+    txt = s.strip()
+    if not txt:
+        return ""
+    try:
+        import re
+
+        # Remove simple paragraph wrappers and line breaks
+        txt = re.sub(r"\s*<\s*/?\s*p\s*>\s*", "\n", txt, flags=re.IGNORECASE)
+        txt = re.sub(r"<\s*br\s*/?\s*>", "\n", txt, flags=re.IGNORECASE)
+
+        # Collapse and clean lines
+        lines = [line.strip() for line in txt.splitlines()]
+        lines = [line for line in lines if line]
+        txt = "\n".join(lines)
+    except Exception:
+        # Keep best-effort text rather than crashing
+        pass
+    return txt.strip()
+
+
+def prepare_combined_message(primary_text: Optional[str], fallback_text: Optional[str]) -> Dict[str, Any]:
+    """Return a normalized combined view of primary and fallback text.
+
+    Result keys:
+      - primary_text: normalized primary ("" if none)
+      - latest_text: normalized fallback ("" if none)
+      - same: whether both non-empty and identical
+      - final_text: if same -> string; else -> dict with both texts (keeps routing hint)
+    """
+    p = _normalize_text(primary_text or "")
+    f = _normalize_text(fallback_text or "")
+    same = bool(p) and (p == f)
+    if same:
+        return {"primary_text": p, "latest_text": f, "same": True, "final_text": p}
+    return {"primary_text": p, "latest_text": f, "same": False, "final_text": {"primary_text": p, "latest_text": f}}
+
+
+
 async def process_telex_message(user_id: str, message: str) -> Dict[str, Any]:
     """Plan using strict schema and execute via llm_service executor."""
+    # Safety check: handle dict input (shouldn't happen after fix, but defensive)
+    if isinstance(message, dict):
+        logger.warning("process_telex_message: received dict instead of string, extracting text")
+        message = message.get("primary_text") or message.get("latest_text") or ""
+    
     text = (message or "").strip()
     logger.info("process_telex_message: received text='%s' (len=%d) for user_id=%s", text, len(text), user_id)
 
@@ -66,9 +113,39 @@ async def handle_a2a_request(payload: Dict[str, Any]) -> Dict[str, Any]:
     request_id = payload.get("id", "")
     params = payload.get("params", {})
     msg_obj = params.get("message", {})
-    text = latest_text(msg_obj.get("parts")) or msg_obj.get("text") or params.get("text") or ""
-    text = str(text).strip()
+    parts = msg_obj.get("parts") if isinstance(msg_obj, dict) else None
+
+    # Primary top-level text (parts[0]) if present and a text kind
+    primary_text = ""
+    if isinstance(parts, list) and parts:
+        first = parts[0]
+        if isinstance(first, dict) and first.get("kind") == "text":
+            t0 = first.get("text")
+            if isinstance(t0, str) and t0.strip():
+                primary_text = t0
+
+    fallback_text = latest_text(parts) or msg_obj.get("text") or params.get("text") or ""
+    fallback_text = str(fallback_text).strip()
     user_id = params.get("user_id") or msg_obj.get("user_id") or "unknown-user"
+
+    combined = prepare_combined_message(primary_text, fallback_text)
+    logger.debug("telex: primary_len=%d fallback_len=%d same=%s",
+                 len(combined["primary_text"]), len(combined["latest_text"]), combined["same"])
+    # Final text to process
+    # Extract text string from combined result
+    final_text = combined["final_text"]
+    if isinstance(final_text, dict):
+        # When texts differ, final_text is a dict - concatenate both or use latest_text (which is the most recent user message)
+        primary = final_text.get("primary_text", "").strip()
+        latest = final_text.get("latest_text", "").strip()
+        # Concatenate if both exist, otherwise use whichever is available
+        if primary and latest:
+            text = f"{primary} {latest}"
+        else:
+            text = latest or primary or ""
+    else:
+        # When texts are same, final_text is a string
+        text = final_text or ""
 
     config = params.get("configuration", {}) if isinstance(params, dict) else {}
     push_config = config.get("pushNotificationConfig", {}) or {}

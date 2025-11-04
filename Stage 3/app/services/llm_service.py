@@ -1,16 +1,17 @@
 import logging
 import asyncio
 from typing import Any, Dict, List
-from fastapi import HTTPException
 from app.utils import llm
 from app import crud
+from app.services.common import parse_dt
 
 logger = logging.getLogger("llm_service")
 
 
 async def plan_actions_strict(user_message: str) -> List[Dict[str, Any]]:
     """
-    Wrapper around llm.extract_actions that enforces JSON-only, fails fast on malformed responses.
+    Wrapper around llm.extract_actions that gracefully handles all failure cases.
+    Returns empty list or actions with 'unknown' type when planning fails.
     """
     try:
         result = await asyncio.to_thread(llm.extract_actions, user_message)
@@ -20,23 +21,18 @@ async def plan_actions_strict(user_message: str) -> List[Dict[str, Any]]:
             logger.warning("plan_actions_strict: unable to log planner result (non-serializable)")
         actions = result.get("actions", []) if isinstance(result, dict) else []
         if not actions:
-            logger.error("Planner returned no actions for message: %s", user_message)
-            raise RuntimeError("Planner returned no actions")
+            logger.warning("Planner returned no actions for message: %s", user_message)
+            # Return an 'unknown' type action so downstream can handle it gracefully
+            return [{"type": "unknown", "action": "unrecognized", "params": {"original_text": user_message}}]
         return actions
     except Exception as e:
         logger.exception("plan_actions_strict failed: %s", e)
-        raise HTTPException(status_code=500, detail=f"LLM planning failed: {e}")
+        # Soft fail: return unknown type instead of raising exception
+        return [{"type": "unknown", "action": "error", "params": {"original_text": user_message, "error": str(e)}}]
 
 
 async def plan_actions(text: str) -> Dict[str, Any]:
-    """
-    Compatibility wrapper that returns a dict with an "actions" list, using the strict
-    schema produced by app.utils.llm.extract_actions.
-
-    Returns
-    -------
-    dict: {"actions": List[Action]}
-    """
+    """Compatibility wrapper returning {'actions': [...]}"""
     actions = await plan_actions_strict(text)
     return {"actions": actions}
 
@@ -53,54 +49,39 @@ async def execute_actions(user_id: str, actions: List[Dict[str, Any]], original_
 
     from datetime import datetime
 
-    def parse_dt(maybe):
-        if not maybe:
-            return None
-        try:
-            if isinstance(maybe, datetime):
-                return maybe
-            import dateparser  # type: ignore
-            # Prefer future dates to better handle phrases like "next Tuesday morning"
-            dt = dateparser.parse(str(maybe), settings={"PREFER_DATES_FROM": "future"})
-            if dt:
-                return dt
-            return dateparser.parse(str(maybe))
-        except Exception:
-            return None
-
     for act in actions:
         logger.info("execute_actions: executing action=%s", act)
         t = act.get("type")
         a = act.get("action")
-        p = act.get("params", {})
+        p = act.get("params", {}) or {}
 
         try:
             if t == "todo":
                 if a == "create":
                     provided_desc = p.get("description")
                     if not isinstance(provided_desc, str) or not provided_desc.strip():
-                        raise HTTPException(status_code=400, detail="Planner missing required params: todo.create.description")
+                        logger.warning("todo.create: missing required description parameter for user %s", user_id)
+                        msg = "Could not create task: missing description. Please provide what you'd like to add."
+                        responses.append(msg)
+                        metadata_errors.append({"type": "todo.create", "reason": "missing_description", "params": p})
+                        continue
                     desc = provided_desc.strip()
                     logger.info("todo.create: using planner description='%s'", desc)
 
                     # Duplicate detection (normalized, user-scoped)
                     def _norm(s: str) -> str:
                         return " ".join(str(s).strip().lower().split())
+                    
                     existing = await crud.get_tasks(user_id)
                     if any(_norm(tsk.description) == _norm(desc) for tsk in existing):
                         logger.info("todo.create: skipped duplicate '%s' for user %s", desc, user_id)
                         msg = f"Skipped duplicate task: '{desc}'."
                         responses.append(msg)
                         metadata["executed"].append({"type": "todo.create.skipped_duplicate", "description": desc})
-                        # Skip creation
-                        continue
+                        continue # Skip creation
 
                     due_raw = p.get("due_date") or p.get("due")
                     due = parse_dt(due_raw)
-                    if due_raw and not due:
-                        logger.info("todo.create: due parse failed for value='%s'", due_raw)
-                    elif due:
-                        logger.info("todo.create: parsed due date from '%s' -> %s", due_raw, due)
                     task = await crud.create_task(user_id, desc, due_date=due)
                     due_str = due.strftime("%b %d, %Y %I:%M %p") if due else None
                     msg = f"Added '{task.description}' (id: {task.id})"
@@ -184,7 +165,11 @@ async def execute_actions(user_id: str, actions: List[Dict[str, Any]], original_
                     if scope in {"all", "all_pending", "pending", "completed"}:
                         # Bulk update (e.g., mark all pending as completed)
                         if not status_to:
-                            raise HTTPException(status_code=400, detail="Bulk update requires 'status' in params")
+                            logger.warning("todo.update.bulk: missing required 'status' parameter for user %s", user_id)
+                            msg = "Could not update tasks: missing target status. Please specify what status to set (e.g., 'completed', 'pending')."
+                            responses.append(msg)
+                            metadata_errors.append({"type": "todo.update.bulk", "reason": "missing_status", "scope": scope})
+                            continue
                         normalized_scope = "pending" if scope in {"all_pending", "pending"} else ("completed" if scope == "completed" else "all")
                         count = await crud.update_all_tasks_status(user_id, str(status_to), scope=normalized_scope)
                         responses.append(f"Updated {count} task(s).")
@@ -263,7 +248,11 @@ async def execute_actions(user_id: str, actions: List[Dict[str, Any]], original_
                 if a == "create":
                     provided_entry = p.get("entry")
                     if not isinstance(provided_entry, str) or not provided_entry.strip():
-                        raise HTTPException(status_code=400, detail="Planner missing required params: journal.create.entry")
+                        logger.warning("journal.create: missing required entry parameter for user %s", user_id)
+                        msg = "Could not create journal entry: missing content. Please provide what you'd like to journal."
+                        responses.append(msg)
+                        metadata_errors.append({"type": "journal.create", "reason": "missing_entry", "params": p})
+                        continue
                     entry = provided_entry.strip()
                     logger.info("journal.create: using planner entry (len=%d)", len(entry))
                     j = await crud.create_journal(user_id, entry, None, None)
@@ -343,14 +332,49 @@ async def execute_actions(user_id: str, actions: List[Dict[str, Any]], original_
                         responses.append(f"Deleted journal #{int(jid)}.")
                         metadata["executed"].append({"type": "journal.delete", "journal_id": int(jid)})
 
-            else:
-                raise HTTPException(status_code=400, detail=f"Unknown type: {t}")
+            elif t == "unknown":
+                # Handle unrecognized text gracefully
+                logger.info("execute_actions: encountered 'unknown' type for user %s, action=%s", user_id, a)
+                original_text = p.get("original_text", "")
+                error_detail = p.get("error", "")
+                
+                if a == "error":
+                    msg = "I encountered an issue while processing your request. The planner couldn't understand the text format."
+                    if error_detail:
+                        logger.error("Planner error for user %s: %s", user_id, error_detail)
+                else:
+                    msg = "I couldn't determine if this should be a task or journal entry. Please be more specific, or try rephrasing your request."
+                
+                responses.append(msg)
+                metadata_errors.append({
+                    "type": "unknown",
+                    "action": a,
+                    "reason": "unrecognized_text",
+                    "original_text": original_text[:200],  # truncate for safety
+                    "error": error_detail if error_detail else None
+                })
+                continue
 
-        except HTTPException:
-            raise
+            else:
+                # Gracefully handle truly unknown types (shouldn't happen after 'unknown' handling)
+                logger.warning("execute_actions: unknown action type '%s' for user %s", t, user_id)
+                msg = f"I couldn't understand the type of action requested (type: {t}). This text might not be meant for task or journal management."
+                responses.append(msg)
+                metadata_errors.append({"type": t, "action": a, "reason": "unsupported_type", "params": p})
+                continue
+
         except Exception as e:
-            logger.exception("Action execution failed: %s", e)
-            raise HTTPException(status_code=500, detail=f"Failed to execute {t}.{a}: {e}")
+            # Never raise - convert all exceptions to soft errors
+            logger.exception("Action execution failed for user %s, type=%s, action=%s: %s", user_id, t, a, e)
+            msg = f"An error occurred while processing your request: {str(e)}"
+            responses.append(msg)
+            metadata_errors.append({
+                "type": t or "unknown",
+                "action": a or "unknown",
+                "reason": "execution_exception",
+                "error": str(e)
+            })
+            continue
 
     if not responses:
         reply = "Done."

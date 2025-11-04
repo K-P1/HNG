@@ -3,19 +3,29 @@ from uuid import uuid4
 import app.models.a2a as a2a_models
 
 
-def latest_text(parts: Optional[List]) -> str:
-    """Extract latest textual content from A2A message parts."""
+def latest_text(parts: Optional[List[Any]]) -> str:
+    """Extract latest textual content from A2A message parts.
+
+    Works by walking parts in reverse order, preferring:
+      1) last 'text' part
+      2) last textual entry inside a 'data' part list
+    Returns "" if nothing found.
+    """
     if not parts:
         return ""
     for p in reversed(parts):
         if not isinstance(p, dict):
             continue
-        if p.get("kind") == "text" and p.get("text"):
-            return p["text"].strip()
-        if p.get("kind") == "data" and isinstance(p.get("data"), list):
+        kind = p.get("kind")
+        text = p.get("text")
+        if kind == "text" and isinstance(text, str) and text.strip():
+            return text.strip()
+        if kind == "data" and isinstance(p.get("data"), list):
             for item in reversed(p["data"]):
-                if isinstance(item, dict) and item.get("text"):
-                    return item["text"].strip()
+                if isinstance(item, dict):
+                    t = item.get("text")
+                    if isinstance(t, str) and t.strip():
+                        return t.strip()
     return ""
 
 
