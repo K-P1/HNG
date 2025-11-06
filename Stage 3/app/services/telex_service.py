@@ -116,9 +116,23 @@ async def handle_a2a_request(payload: Dict[str, Any]) -> Dict[str, Any]:
     push_config = config.get("pushNotificationConfig") or {}
     push_url = push_config.get("url")
     
+    # Store/update user's push configuration for autonomous reminders
+    if push_url:
+        from app import crud
+        try:
+            # Extract token from push_config
+            push_token = push_config.get("token")
+            if not push_token:
+                auth = push_config.get("authentication", {})
+                if isinstance(auth, dict):
+                    push_token = auth.get("credentials")
+            
+            await crud.upsert_user(user_id, push_url=push_url, push_token=push_token)
+            logger.info("Stored push config for user %s", user_id)
+        except Exception as e:
+            logger.warning("Failed to store push config for user %s: %s", user_id, e)
+    
     # Determine blocking mode
-    # override default blocking with .env async option. restore when Telex fix followups
-    #req_blocking = config.get("blocking", True)
     async_enabled = os.getenv("A2A_ASYNC_ENABLED", "").lower() in ("true", "1", "yes")
     blocking = not async_enabled
     
@@ -153,12 +167,12 @@ async def handle_a2a_request(payload: Dict[str, Any]) -> Dict[str, Any]:
                     parts.append({"kind": "data", "data": {"tasks": result["task_list"]}})
                 
                 # Send result back to Telex via webhook
-                await send_telex_followup(push_url, msg, push_config, request_id, additional_parts=parts)
+                await send_telex_followup(push_url, msg, push_config, request_id, context_id=context_id, additional_parts=parts)
             except Exception as e:
                 logger.exception("Follow-up failed: %s", e)
                 # Try to send error notification, but don't fail if this also errors
                 try:
-                    await send_telex_followup(push_url, f"Error: {e}", push_config, request_id)
+                    await send_telex_followup(push_url, f"Error: {e}", push_config, request_id, context_id=context_id)
                 except Exception as e2:
                     logger.error("Failed to send error notification: %s", e2)
 

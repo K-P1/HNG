@@ -35,9 +35,34 @@ async def lifespan(app: FastAPI):
         logger.critical("Database initialization failed: %s", e)
         raise  # fail fast — app should not start without DB
 
+    # Start reminder scheduler only in async mode (reminders require push notifications)
+    import os
+    async_enabled = os.getenv("A2A_ASYNC_ENABLED", "").lower() in ("true", "1", "yes")
+    if async_enabled:
+        logger.info("Startup: starting reminder scheduler...")
+        try:
+            from app.features.reminders import start_reminder_scheduler
+            await start_reminder_scheduler()
+            logger.info("Reminder scheduler started successfully")
+        except Exception as e:
+            logger.error("Failed to start reminder scheduler: %s", e)
+    else:
+        logger.info("Reminder scheduler disabled (A2A_ASYNC_ENABLED not set)")
+
     yield  # app runs during this block
 
     # Cleanup
+    import os
+    async_enabled = os.getenv("A2A_ASYNC_ENABLED", "").lower() in ("true", "1", "yes")
+    if async_enabled:
+        logger.info("Shutdown: stopping reminder scheduler...")
+        try:
+            from app.features.reminders import stop_reminder_scheduler
+            await stop_reminder_scheduler()
+            logger.info("Reminder scheduler stopped")
+        except Exception as e:
+            logger.error("Error stopping reminder scheduler: %s", e)
+    
     logger.info("Shutdown: closing database connection pool...")
     try:
         await database.shutdown_db_async()

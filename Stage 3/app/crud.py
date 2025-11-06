@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List, Iterable, Dict, Any
 from sqlalchemy import select, func, desc
 from app.database import AsyncSessionLocal
@@ -25,9 +25,21 @@ async def _commit_refresh(session, obj):
 
 # --- Task Operations ---------------------------------------------------------
 
-async def create_task(user_id: str, description: str, due_date: Optional[datetime] = None) -> db.Task:
+async def create_task(
+    user_id: str, 
+    description: str, 
+    due_date: Optional[datetime] = None,
+    reminder_time: Optional[datetime] = None,
+    reminder_enabled: bool = True
+) -> db.Task:
     async with AsyncSessionLocal() as dbs:
-        task = db.Task(user_id=user_id, description=description, due_date=due_date)
+        task = db.Task(
+            user_id=user_id, 
+            description=description, 
+            due_date=due_date,
+            reminder_time=reminder_time,
+            reminder_enabled=reminder_enabled
+        )
         dbs.add(task)
         await _commit_refresh(dbs, task)
         logger.info("Created task %s for user %s", task.id, user_id)
@@ -111,6 +123,8 @@ async def update_task(
     description: Optional[str] = None,
     status: Optional[str] = None,
     due_date: Optional[datetime] = None,
+    reminder_time: Optional[datetime] = None,
+    reminder_enabled: Optional[bool] = None,
 ) -> Optional[db.Task]:
     async with AsyncSessionLocal() as dbs:
         task = await _get_or_none(dbs, db.Task, task_id)
@@ -122,6 +136,10 @@ async def update_task(
             task.status = status
         if due_date is not None:
             task.due_date = due_date
+        if reminder_time is not None:
+            task.reminder_time = reminder_time
+        if reminder_enabled is not None:
+            task.reminder_enabled = reminder_enabled
         await _commit_refresh(dbs, task)
         logger.info("Updated task %s", task.id)
         return task
@@ -288,3 +306,76 @@ async def delete_journals_bulk(user_id: str, *, scope: str = "all") -> int:
         await dbs.commit()
         logger.info("Bulk deleted %d journal(s) for user %s (scope=%s)", count, user_id, scope)
         return count
+
+
+# --- User Operations ---------------------------------------------------------
+
+async def upsert_user(user_id: str, push_url: Optional[str] = None, push_token: Optional[str] = None) -> db.User:
+    """Create or update user with push configuration."""
+    async with AsyncSessionLocal() as dbs:
+        # Try to find existing user
+        result = await dbs.execute(select(db.User).where(db.User.user_id == user_id))
+        user = result.scalar_one_or_none()
+        
+        if user:
+            # Update existing user
+            if push_url is not None:
+                user.push_url = push_url
+            if push_token is not None:
+                user.push_token = push_token
+            user.updated_at = datetime.now(timezone.utc)
+            await _commit_refresh(dbs, user)
+            logger.info("Updated user %s", user_id)
+        else:
+            # Create new user
+            user = db.User(user_id=user_id, push_url=push_url, push_token=push_token)
+            dbs.add(user)
+            await _commit_refresh(dbs, user)
+            logger.info("Created user %s", user_id)
+        
+        return user
+
+
+async def get_user(user_id: str) -> Optional[db.User]:
+    """Get user by user_id."""
+    async with AsyncSessionLocal() as dbs:
+        result = await dbs.execute(select(db.User).where(db.User.user_id == user_id))
+        return result.scalar_one_or_none()
+
+
+# --- Reminder Operations -----------------------------------------------------
+
+async def get_tasks_needing_reminders() -> List[db.Task]:
+    """Get all tasks that need reminders sent."""
+    now = datetime.now(timezone.utc)
+    
+    async with AsyncSessionLocal() as dbs:
+        # Query for tasks where:
+        # 1. Status is pending (not completed/cancelled)
+        # 2. Reminders are enabled
+        # 3. Has either due_date or reminder_time set
+        stmt = (
+            select(db.Task)
+            .where(db.Task.status == "pending")
+            .where(db.Task.reminder_enabled == True)
+            .where(
+                (db.Task.due_date.isnot(None)) | (db.Task.reminder_time.isnot(None))
+            )
+        )
+        result = await dbs.execute(stmt)
+        tasks = list(result.scalars())
+        
+        logger.info("Found %d tasks potentially needing reminders", len(tasks))
+        return tasks
+
+
+async def mark_reminder_sent(task_id: int) -> bool:
+    """Mark that a reminder was sent for this task."""
+    async with AsyncSessionLocal() as dbs:
+        task = await _get_or_none(dbs, db.Task, task_id)
+        if not task:
+            return False
+        task.last_reminder_sent = datetime.now(timezone.utc)
+        await dbs.commit()
+        logger.info("Marked reminder sent for task %s", task_id)
+        return True

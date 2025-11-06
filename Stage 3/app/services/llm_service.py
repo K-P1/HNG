@@ -54,10 +54,21 @@ async def execute_actions(user_id: str, actions: List[Dict[str, Any]], original_
 
                     # Create task
                     due = parse_dt(p.get("due_date") or p.get("due"))
-                    task = await crud.create_task(user_id, desc, due_date=due)
+                    reminder = parse_dt(p.get("reminder_time") or p.get("reminder"))
+                    
+                    task = await crud.create_task(
+                        user_id, 
+                        desc, 
+                        due_date=due,
+                        reminder_time=reminder,
+                        reminder_enabled=True
+                    )
+                    
                     msg = f"Added '{task.description}' (id: {task.id})"
                     if due:
                         msg += f" due {due.strftime('%b %d, %Y %I:%M %p')}"
+                    if reminder:
+                        msg += f", reminder at {reminder.strftime('%b %d, %Y %I:%M %p')}"
                     responses.append(msg)
                     executed.append({"type": "todo.create", "task_id": task.id})
 

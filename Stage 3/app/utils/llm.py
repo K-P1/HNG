@@ -140,7 +140,10 @@ def extract_actions(text: str) -> Dict[str, List[Dict[str, Any]]]:
         "  Examples: 'Add buy milk', 'Create task to review code', 'Mark task complete', 'List my tasks'.\n"
         "- **unknown**: Use ONLY for unrelated messages (greetings, questions about weather, random chat, etc.).\n\n"
         
-        "- For todo.create: params MUST include {\"description\": string}. If a due time exists, also include \"due\" (string like 'tomorrow', 'next Monday 9am'). Keep description concise and imperative (e.g., 'fix my headset').\n"
+        "- For todo.create: params MUST include {\"description\": string}. "
+        "If a due date/time exists, include \"due\" (string like 'tomorrow', 'next Monday 9am'). "
+        "If the user says 'remind me in X hours/days' or sets a specific reminder time, include \"reminder\" (string like 'in 2 hours', 'tomorrow 3pm'). "
+        "Keep description concise and imperative (e.g., 'fix my headset').\n"
         "- For todo.read (list tasks): Extract optional filters if present in the message and place them under params using these exact keys: \n"
         "  {status: 'pending'|'completed', limit: number, dueBefore: string, dueAfter: string, tags: string[] or string, query: string}.\n"
         "  Only include filters that are explicitly implied by the message; omit unknowns.\n"
@@ -200,3 +203,57 @@ def extract_actions(text: str) -> Dict[str, List[Dict[str, Any]]]:
 
     logger.info("extract_actions: produced %d validated actions", len(cleaned_actions))
     return {"actions": cleaned_actions}
+
+
+def generate_reminder_message(task_description: str, time_context: str) -> str:
+    """
+    Generate a casual, natural language reminder message for a task.
+    
+    Args:
+        task_description: The task description
+        time_context: Context like "due in 2 hours", "overdue by 1 day", "due now"
+    
+    Returns:
+        A casual reminder message
+    """
+    prompt = f"""Generate a brief, casual reminder message for a task.
+
+Task: {task_description}
+Time: {time_context}
+
+Requirements:
+- Keep it simple and casual
+- State the task and time info clearly
+- No extra questions or suggestions
+- 1-2 sentences max
+
+Examples:
+- "Hey! Your task 'Submit report' is due in 1 hour."
+- "Reminder: 'Buy groceries' is due now."
+- "Heads up - 'Call mom' was due 2 days ago."
+
+Generate only the reminder message, nothing else."""
+
+    try:
+        messages = [
+            {"role": "system", "content": "You are a helpful assistant that generates brief, casual task reminders."},
+            {"role": "user", "content": prompt}
+        ]
+        
+        response = _groq_chat(messages, temperature=0.7, max_tokens=100)
+        
+        # Clean up response
+        message = response.strip()
+        # Remove quotes if LLM wrapped it
+        if message.startswith('"') and message.endswith('"'):
+            message = message[1:-1]
+        if message.startswith("'") and message.endswith("'"):
+            message = message[1:-1]
+        
+        logger.info("Generated reminder message for task: %s", task_description[:50])
+        return message
+        
+    except Exception as e:
+        logger.error("Failed to generate reminder message: %s", e)
+        # Fallback to simple template
+        return f"Reminder: '{task_description}' - {time_context}"

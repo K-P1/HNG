@@ -19,12 +19,16 @@ class TaskStatus(str, Enum):
 class TaskCreate(BaseModel):
     description: str = Field(..., description="Description or title of the task")
     due_date: Optional[datetime] = Field(None, description="Optional due date of the task")
+    reminder_time: Optional[datetime] = Field(None, description="Optional specific reminder time (e.g., 'remind me in 2 hours')")
+    reminder_enabled: bool = Field(True, description="Whether reminders are enabled for this task")
 
 
 class TaskUpdate(BaseModel):
     description: Optional[str] = Field(None, description="Updated description of the task")
     status: Optional[TaskStatus] = Field(None, description="New status of the task")
     due_date: Optional[datetime] = Field(None, description="Updated due date")
+    reminder_time: Optional[datetime] = Field(None, description="Updated reminder time")
+    reminder_enabled: Optional[bool] = Field(None, description="Toggle reminders on/off")
 
 
 class TaskOut(BaseModel):
@@ -34,6 +38,9 @@ class TaskOut(BaseModel):
     status: TaskStatus = Field(..., description="The current status of the task")
     created_at: datetime = Field(..., description="Timestamp when the task was created")
     due_date: Optional[datetime] = Field(None, description="The due date of the task")
+    reminder_time: Optional[datetime] = Field(None, description="Specific reminder time")
+    last_reminder_sent: Optional[datetime] = Field(None, description="When last reminder was sent")
+    reminder_enabled: bool = Field(True, description="Whether reminders are enabled")
 
     model_config = {"from_attributes": True}
 

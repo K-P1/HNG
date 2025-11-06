@@ -33,13 +33,23 @@ def parse_dt(maybe: Any) -> Optional[datetime]:
                 continue
         try:
             import dateparser  # type: ignore
-            dt = dateparser.parse(maybe)
+            # Parse with timezone-aware settings
+            # Use PREFER_DATES_FROM='future' for relative dates like "in 5 minutes"
+            dt = dateparser.parse(
+                maybe, 
+                settings={
+                    'TIMEZONE': 'UTC',  # Parse all dates as UTC
+                    'RETURN_AS_TIMEZONE_AWARE': True,
+                    'PREFER_DATES_FROM': 'future'
+                }
+            )
             if dt:
-                # If dateparser returned timezone-naive, make it UTC
-                if dt.tzinfo is None:
-                    dt = dt.replace(tzinfo=timezone.utc)
+                # Convert to UTC if not already
+                if dt.tzinfo != timezone.utc:
+                    dt = dt.astimezone(timezone.utc)
                 return dt
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Dateparser failed for '{maybe}': {e}")
             return None
 
     return None

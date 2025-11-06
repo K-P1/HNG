@@ -6,8 +6,20 @@ from app import crud
 logger = logging.getLogger("services.task")
 
 
-async def create_task(user_id: str, description: str, due_date: Optional[datetime] = None):
-    return await crud.create_task(user_id, description, due_date=due_date)
+async def create_task(
+    user_id: str, 
+    description: str, 
+    due_date: Optional[datetime] = None,
+    reminder_time: Optional[datetime] = None,
+    reminder_enabled: bool = True
+):
+    return await crud.create_task(
+        user_id, 
+        description, 
+        due_date=due_date,
+        reminder_time=reminder_time,
+        reminder_enabled=reminder_enabled
+    )
 
 
 async def list_tasks(user_id: str) -> List:

@@ -29,6 +29,14 @@ class Settings(BaseSettings):
     # true/1/yes → prefer async with push_url (unless blocking: true)
     a2a_async_enabled: Optional[str] = Field(default=None, alias="A2A_ASYNC_ENABLED")
 
+    # Reminder settings
+    reminder_check_interval_minutes: int = Field(default=1, alias="REMINDER_CHECK_INTERVAL_MINUTES")
+    reminder_advance_hours: str = Field(default="24,1", alias="REMINDER_ADVANCE_HOURS")  # Comma-separated: 24h, 1h before
+    reminder_quiet_hours_start: int = Field(default=22, alias="REMINDER_QUIET_HOURS_START")  # 10pm
+    reminder_quiet_hours_end: int = Field(default=8, alias="REMINDER_QUIET_HOURS_END")  # 8am
+    reminder_max_overdue_reminders: int = Field(default=5, alias="REMINDER_MAX_OVERDUE_REMINDERS")
+    reminder_overdue_interval_hours: int = Field(default=24, alias="REMINDER_OVERDUE_INTERVAL_HOURS")  # Remind every 24h when overdue
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

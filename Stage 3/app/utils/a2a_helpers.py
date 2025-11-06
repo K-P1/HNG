@@ -48,4 +48,4 @@ def build_task_result(
         artifacts=build_artifacts(artifacts),
         history=history_msgs or [],
     )
-    return {"jsonrpc": "2.0", "id": request_id, "result": task.model_dump()}
+    return {"jsonrpc": "2.0", "id": request_id, "result": task.model_dump(exclude_none=True)}

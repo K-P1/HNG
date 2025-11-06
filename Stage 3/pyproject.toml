@@ -22,6 +22,8 @@ dependencies = [
     "dateparser>=1.2.0",
     "asyncpg",
     "aiosqlite>=0.21.0",
+    "apscheduler>=3.10.0",
+    "tzdata",
 ]
 
 [tool.setuptools.packages.find]

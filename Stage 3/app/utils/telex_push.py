@@ -13,6 +13,7 @@ async def send_telex_followup(
     push_config: Optional[Dict[str, Any]] = None,
     request_id: Optional[str] = None,
     *,
+    context_id: Optional[str] = None,
     additional_parts: Optional[List[Dict[str, Any]]] = None,
 ) -> None:
     """Send asynchronous follow-up message to Telex."""
@@ -24,11 +25,10 @@ async def send_telex_followup(
     token = _extract_token(push_config)
     if token:
         headers["Authorization"] = f"Bearer {token}"
-        headers["X-TELEX-API-KEY"] = str(token)
 
     # Build payload
     is_telex = "/a2a/webhooks/" in push_url or "ping.telex.im" in push_url
-    payload = _telex_payload(message, additional_parts, request_id) if is_telex else _generic_payload(message, request_id)
+    payload = _telex_payload(message, additional_parts, request_id, context_id) if is_telex else _generic_payload(message, request_id)
 
     # Send request
     try:
@@ -40,7 +40,7 @@ async def send_telex_followup(
         logger.warning("Follow-up failed (%s), retrying minimal...", e.response.status_code)
         if is_telex:
             async with httpx.AsyncClient(timeout=10) as client:
-                minimal = _telex_payload(message, None, request_id)
+                minimal = _telex_payload(message, None, request_id, context_id)
                 resp = await client.post(push_url, json=minimal, headers=headers)
                 resp.raise_for_status()
         else:
@@ -86,20 +86,57 @@ def _as_part_list(message: str, extras: Optional[List[Dict[str, Any]]]) -> List[
     return parts
 
 
-def _telex_payload(message: str, extras: Optional[List[Dict[str, Any]]], request_id: Optional[str]) -> Dict[str, Any]:
-    """Build Telex JSON-RPC payload."""
+def _telex_payload(
+    message: str, 
+    extras: Optional[List[Dict[str, Any]]], 
+    request_id: Optional[str],
+    context_id: Optional[str]
+) -> Dict[str, Any]:
+    """Build Telex webhook payload for follow-ups.
+    
+    Per Mastra–Telex A2A protocol spec, every A2A webhook request must conform
+    to JSON-RPC 2.0 format with "jsonrpc", "id", "type", and "result" fields.
+    
+    Expected structure:
+    {
+      "jsonrpc": "2.0",
+      "id": "<request_id>",
+      "type": "result",
+      "result": { TaskResult }
+    }
+    """
+    from app.utils.a2a_helpers import build_task_result
+    
+    # Build artifacts from extras if provided
+    artifacts = []
+    if extras:
+        for extra in extras:
+            if isinstance(extra, dict):
+                artifacts.append({
+                    "name": "data",
+                    "parts": [extra]
+                })
+    
+    # build_task_result returns a full JSON-RPC envelope: {"jsonrpc": "2.0", "id": "...", "result": {...}}
+    # Extract the TaskResult from the JSON-RPC envelope
+    full = build_task_result(
+        request_id=request_id or str(uuid.uuid4()),
+        context_id=context_id or str(uuid.uuid4()),
+        state="completed",
+        message_text=message,
+        artifacts=artifacts if artifacts else None,
+        history_msgs=None
+    )
+    
+    # Extract the TaskResult object (without JSON-RPC wrapper)
+    task_result = full["result"]
+    
+    # ✅ Wrap in JSON-RPC 2.0 envelope as required by JSON-RPC spec
+    # Note: Do NOT include "type" field - that's not part of JSON-RPC 2.0 spec
     return {
         "jsonrpc": "2.0",
         "id": request_id or str(uuid.uuid4()),
-        "method": "message/send",
-        "params": {
-            "message": {
-                "kind": "message",
-                "messageId": str(uuid.uuid4()),
-                "role": "agent",
-                "parts": _as_part_list(message, extras),
-            },
-        },
+        "result": task_result
     }
 
 
