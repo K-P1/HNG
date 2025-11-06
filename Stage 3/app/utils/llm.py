@@ -63,40 +63,6 @@ def _groq_chat(messages: List[Dict[str, str]], *, response_json: bool = False,
     return content
 
 
-def classify_intent(text: str) -> str:
-    """
-    Classify the user's message intent into one of: "todo", "journal", "unknown".
-    This function enforces strict JSON-only responses from the LLM and fails fast
-    if anything is malformed.
-    """
-    logger.info("classify_intent: classifying text: %s", text)
-    system = (
-        "You are an intent classifier. Determine whether the user's message "
-        "is a TODO (actionable task) or a JOURNAL (reflective entry). "
-        "Respond ONLY with JSON: {\"intent\": \"todo\" | \"journal\" | \"unknown\"}."
-    )
-    user = f"Message: {text}"
-    content = _groq_chat(
-        [{"role": "system", "content": system}, {"role": "user", "content": user}],
-        response_json=True,
-        temperature=0.0,
-        max_tokens=40,
-    )
-    # content should be JSON text
-    try:
-        data = json.loads(content)
-    except Exception as e:
-        logger.exception("classify_intent: model returned invalid JSON: %s", e)
-        raise RuntimeError("Invalid JSON returned by intent classifier") from e
-
-    intent = str(data.get("intent", "")).lower()
-    if intent not in {"todo", "journal", "unknown"}:
-        logger.error("classify_intent: unexpected intent value: %s", intent)
-        raise RuntimeError(f"Unexpected intent value from model: {intent!r}")
-    logger.info("classify_intent: classified as '%s'", intent)
-    return intent
-
-
 def _validate_action_shape(action: Dict[str, Any]) -> None:
     """
     Raises RuntimeError if action does not conform to the strict schema:
@@ -111,12 +77,20 @@ def _validate_action_shape(action: Dict[str, Any]) -> None:
     t = action.get("type")
     a = action.get("action")
     p = action.get("params")
-    if t not in {"todo", "journal"}:
-        raise RuntimeError(f"Action 'type' must be 'todo' or 'journal', got: {t!r}")
+    if t not in {"todo", "journal", "unknown"}:
+        raise RuntimeError(f"Action 'type' must be 'todo', 'journal', or 'unknown', got: {t!r}")
+    
+    # Unknown type only accepts 'none' action
+    if t == "unknown":
+        if a not in {"none", None}:
+            raise RuntimeError(f"Action type 'unknown' must have action 'none', got: {a!r}")
+        action["action"] = "none"  # Normalize
+        action["params"] = {}
+        return  # Skip further validation
+    
     if a not in {"create", "read", "update", "delete"}:
         raise RuntimeError(f"Action 'action' must be one of create/read/update/delete, got: {a!r}")
     if p is None:
-        # allow empty params but force a dict
         action["params"] = {}
     elif not isinstance(p, dict):
         raise RuntimeError("Action 'params' must be a JSON object")
@@ -156,15 +130,24 @@ def extract_actions(text: str) -> Dict[str, List[Dict[str, Any]]]:
         "Rules (MUST follow exactly):\n"
         "- Output JSON only (no prose).\n"
         "- actions is an array of objects with EXACT shape: {\"type\": string, \"action\": string, \"params\": object}.\n"
-        "- Allowed type: 'todo' or 'journal'.\n"
-        "- Allowed action: 'create' | 'read' | 'update' | 'delete'.\n"
+        "- Allowed type: 'todo', 'journal', or 'unknown'.\n"
+        "- Allowed action: 'create' | 'read' | 'update' | 'delete'.\n\n"
+        
+        "**Type Classification Guidelines:**\n"
+        "- **journal**: Use for emotional expressions, reflections, feelings, personal thoughts, or sentiment-based statements.\n"
+        "  Examples: 'I felt really good today', 'Honestly, I've been struggling', 'Today was stressful', 'Feeling grateful', 'I think I handled it well'.\n"
+        "- **todo**: Use for actionable tasks, commands, or requests with clear action verbs.\n"
+        "  Examples: 'Add buy milk', 'Create task to review code', 'Mark task complete', 'List my tasks'.\n"
+        "- **unknown**: Use ONLY for unrelated messages (greetings, questions about weather, random chat, etc.).\n\n"
+        
         "- For todo.create: params MUST include {\"description\": string}. If a due time exists, also include \"due\" (string like 'tomorrow', 'next Monday 9am'). Keep description concise and imperative (e.g., 'fix my headset').\n"
         "- For todo.read (list tasks): Extract optional filters if present in the message and place them under params using these exact keys: \n"
         "  {status: 'pending'|'completed', limit: number, dueBefore: string, dueAfter: string, tags: string[] or string, query: string}.\n"
         "  Only include filters that are explicitly implied by the message; omit unknowns.\n"
-        "- For journal.create: params MUST include {\"entry\": string}.\n"
+        "- For journal.create: params MUST include {\"entry\": string}. Capture the full emotional/reflective content.\n"
         "- For todo.update/delete of many: include params.scope with one of 'all', 'pending', or 'completed'. For bulk update also include params.status (e.g., 'completed').\n"
         "- For update/delete: prefer an explicit \"id\" when user provides it; otherwise include a discriminating field such as \"description\" (todo) or \"entry\" (journal).\n"
+        "- For unknown type: set action to 'none' and leave params empty {}.\n"
         "- If the input asks for multiple things, return multiple actions in order.\n"
         "- Do not add extra keys beyond type, action, params; do not include comments."
     )
